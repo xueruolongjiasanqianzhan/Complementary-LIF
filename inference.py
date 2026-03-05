@@ -14,6 +14,8 @@ if not hasattr(np, 'bool'):
     np.bool = bool  # type: ignore[attr-defined]
 if not hasattr(np, 'int'):
     np.int = int  # type: ignore[attr-defined]
+if not hasattr(np, 'typeDict'):
+    np.typeDict = np.sctypeDict  # type: ignore[attr-defined]
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
