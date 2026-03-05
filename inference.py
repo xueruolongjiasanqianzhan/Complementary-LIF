@@ -6,6 +6,16 @@ import random
 import time
 
 import numpy as np
+
+# NumPy>=1.20 compatibility for legacy third-party code
+if not hasattr(np, 'object'):
+    np.object = object  # type: ignore[attr-defined]
+if not hasattr(np, 'bool'):
+    np.bool = bool  # type: ignore[attr-defined]
+if not hasattr(np, 'int'):
+    np.int = int  # type: ignore[attr-defined]
+if not hasattr(np, 'typeDict'):
+    np.typeDict = np.sctypeDict  # type: ignore[attr-defined]
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -64,10 +74,20 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='save the initialization of parameters')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), CLIF, PLIF, relu')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
+    parser.add_argument('-tau_mode', type=str, default='spike', help='for newLIF only: fixed or spike')
+    parser.add_argument('-tau_lo', type=float, default=None, help='for newLIF only: tau lower bound')
+    parser.add_argument('-tau_hi', type=float, default=None, help='for newLIF only: tau upper bound')
+    parser.add_argument('-tau_eta', type=float, default=1.0, help='for newLIF only: tau update scale')
+    parser.add_argument('-tau_alpha_up', type=float, default=0.02, help='for newLIF only: alpha when no spike')
+    parser.add_argument('-tau_alpha_down', type=float, default=0.02, help='for newLIF only: alpha when spike')
+    parser.add_argument('-tau_detach_spike', type=bool, default=True, help='for newLIF only: detach spike in tau update')
+    parser.add_argument('-tau_eps', type=float, default=1e-6, help='for newLIF only: epsilon for numerical stability')
+    parser.add_argument('-tau_learn_alpha', action='store_true', help='for newLIF only: make alpha learnable')
+    parser.add_argument('-tau_alpha_share', action='store_true', help='for newLIF only: share alpha_up and alpha_down')
 
     args = parser.parse_args()
     print(args)
@@ -269,6 +289,8 @@ def main():
         raise NotImplementedError
 
     if args.neuron_model == 'LIF':
+        neuron_model = neuron.VanillaLIFNeuron
+    elif args.neuron_model == 'newLIF':
         neuron_model = neuron.BPTTNeuron
     elif args.neuron_model == 'CLIF':
         neuron_model = neuron.ComplementaryLIFNeuron
@@ -280,24 +302,39 @@ def main():
     else:
         raise NotImplementedError
 
+    neuron_kwargs = dict(
+        tau=args.tau,
+        surrogate_function=surrogate_function,
+        tau_mode=args.tau_mode,
+        tau_lo=args.tau_lo,
+        tau_hi=args.tau_hi,
+        tau_eta=args.tau_eta,
+        tau_alpha_up=args.tau_alpha_up,
+        tau_alpha_down=args.tau_alpha_down,
+        tau_detach_spike=args.tau_detach_spike,
+        tau_eps=args.tau_eps,
+        tau_learn_alpha=args.tau_learn_alpha,
+        tau_alpha_share=args.tau_alpha_share,
+    )
+
     if args.model in ['spiking_resnet18', 'spiking_resnet34', 'spiking_resnet50', 'spiking_resnet101',
                       'spiking_resnet152']:
         net = spiking_resnet.__dict__[args.model](neuron=neuron_model, num_classes=num_classes,
                                                   neuron_dropout=args.drop_rate,
-                                                  tau=args.tau, surrogate_function=surrogate_function, c_in=c_in,
-                                                  fc_hw=1)
+                                                  c_in=c_in,
+                                                  fc_hw=1, **neuron_kwargs)
         print('using Resnet model.')
     elif args.model in ['spiking_vgg11_bn', 'spiking_vgg13_bn', 'spiking_vgg16_bn', 'spiking_vgg19_bn']:
         net = spiking_vgg_bn.__dict__[args.model](neuron=neuron_model, num_classes=num_classes,
                                                   neuron_dropout=args.drop_rate,
-                                                  tau=args.tau, surrogate_function=surrogate_function, c_in=c_in,
-                                                  fc_hw=in_dim if in_dim else None)
+                                                  c_in=c_in,
+                                                  fc_hw=in_dim if in_dim else None, **neuron_kwargs)
         print('using Spiking VGG model.')
     elif args.model in ['vggsnn', 'snn5_noAP']:  # snn5_noAP use for statistical experiment
         net = vgg_model.__dict__[args.model](neuron=neuron_model, num_classes=num_classes,
                                              neuron_dropout=args.drop_rate,
-                                             tau=args.tau, surrogate_function=surrogate_function, c_in=c_in,
-                                             fc_hw=in_dim if in_dim else None)
+                                             c_in=c_in,
+                                             fc_hw=in_dim if in_dim else None, **neuron_kwargs)
         print('using Spiking VGG model.')
     else:
         raise NotImplementedError
