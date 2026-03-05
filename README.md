@@ -52,7 +52,7 @@ CIFAR-10, CIFAR-100, Tiny-Imagenet, DVS-CIFAR10, and DVS-Gesture:
 	# DVS-Gesture
     python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4  -neuron CLIF
 
-If you change the neuron, you can directly switch to ``LIF`` or ``PLIF`` by modifying the hyperparameters after ``-neuron``.
+If you change the neuron, you can switch with ``-neuron_model`` among ``LIF`` (vanilla), ``newLIF`` (adaptive tau), ``CLIF``, and ``PLIF``.
 
 For example to setup LIF neuron for CIFAR-10 task:
 
@@ -60,6 +60,19 @@ For example to setup LIF neuron for CIFAR-10 task:
 	python train_BPTT.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -amp -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron LIF
     
 
+
+
+
+Quick comparison example (same setting, only neuron changed):
+
+    # vanilla LIF
+    python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -neuron_model LIF
+
+    # new LIF (adaptive tau)
+    python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -neuron_model newLIF -tau_mode spike
+
+    # CLIF
+    python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -neuron_model CLIF
 
 ## Inference
 The inference setup could refer file: ``run_inference_script``
