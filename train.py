@@ -72,6 +72,17 @@ def main():
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
 
+    parser.add_argument('-tau_mode', type=str, default='spike', choices=['fixed', 'spike'], help='tau adaptation mode for BPTTNeuron')
+    parser.add_argument('-tau_lo', type=float, default=None, help='lower bound of tau for dynamic tau mode')
+    parser.add_argument('-tau_hi', type=float, default=None, help='upper bound of tau for dynamic tau mode')
+    parser.add_argument('-tau_eta', type=float, default=1.0, help='step size of spike-driven tau update')
+    parser.add_argument('-tau_alpha_up', type=float, default=0.02, help='tau log-step when spike==0')
+    parser.add_argument('-tau_alpha_down', type=float, default=0.02, help='tau log-step when spike==1')
+    parser.add_argument('-tau_detach_spike', type=bool, default=True, help='detach spike in tau update')
+    parser.add_argument('-tau_eps', type=float, default=1e-6, help='epsilon for stable decay computation')
+    parser.add_argument('-tau_learn_alpha', type=bool, default=False, help='learnable alpha for tau adaptation')
+    parser.add_argument('-tau_alpha_share', type=bool, default=False, help='share alpha_up and alpha_down when learnable')
+
     args = parser.parse_args()
     print(args)
 
@@ -276,23 +287,36 @@ def main():
     else:
         raise NotImplementedError
 
+
+    neuron_kwargs = dict(
+        tau=args.tau,
+        surrogate_function=surrogate_function,
+        tau_mode=args.tau_mode,
+        tau_lo=args.tau_lo,
+        tau_hi=args.tau_hi,
+        tau_eta=args.tau_eta,
+        tau_alpha_up=args.tau_alpha_up,
+        tau_alpha_down=args.tau_alpha_down,
+        tau_detach_spike=args.tau_detach_spike,
+        tau_eps=args.tau_eps,
+        tau_learn_alpha=args.tau_learn_alpha,
+        tau_alpha_share=args.tau_alpha_share,
+    )
+
     if args.model in ['spiking_resnet18', 'spiking_resnet34', 'spiking_resnet50', 'spiking_resnet101', 'spiking_resnet152']:
         net = spiking_resnet.__dict__[args.model](neuron=neuron_model, num_classes=num_classes,
                                                   neuron_dropout=args.drop_rate,
-                                                  tau=args.tau, surrogate_function=surrogate_function, c_in=c_in,
-                                                  fc_hw=1)
+                                                  c_in=c_in, fc_hw=1, **neuron_kwargs)
         print('using Resnet model.')
     elif args.model in ['spiking_vgg11_bn', 'spiking_vgg13_bn', 'spiking_vgg16_bn', 'spiking_vgg19_bn']:
         net = spiking_vgg_bn.__dict__[args.model](neuron=neuron_model, num_classes=num_classes,
                                                   neuron_dropout=args.drop_rate,
-                                                  tau=args.tau, surrogate_function=surrogate_function, c_in=c_in,
-                                                  fc_hw=in_dim if in_dim else None)
+                                                  c_in=c_in, fc_hw=in_dim if in_dim else None, **neuron_kwargs)
         print('using Spiking VGG model.')
     elif args.model in ['vggsnn', 'snn5_noAP']:  # snn5_noAP use for statistical experiment
         net = vgg_model.__dict__[args.model](neuron=neuron_model, num_classes=num_classes,
                                              neuron_dropout=args.drop_rate,
-                                             tau=args.tau, surrogate_function=surrogate_function, c_in=c_in,
-                                             fc_hw=in_dim if in_dim else None)
+                                             c_in=c_in, fc_hw=in_dim if in_dim else None, **neuron_kwargs)
         print('using Spiking VGG model.')
     else:
         raise NotImplementedError
