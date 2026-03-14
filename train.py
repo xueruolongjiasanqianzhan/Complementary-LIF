@@ -77,7 +77,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), CLIF, PLIF, relu')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
@@ -91,6 +91,7 @@ def main():
     parser.add_argument('-tau_eps', type=float, default=1e-6, help='for newLIF only: epsilon for numerical stability')
     parser.add_argument('-tau_learn_alpha', action='store_true', help='for newLIF only: make alpha learnable')
     parser.add_argument('-tau_alpha_share', action='store_true', help='for newLIF only: share alpha_up and alpha_down')
+    parser.add_argument('-tau_learn_eta', action='store_true', help='for newLIFTauDep/newCLIF only: make eta learnable')
 
     args = parser.parse_args()
     print(args)
@@ -288,6 +289,10 @@ def main():
         neuron_model = neuron.VanillaLIFNeuron
     elif args.neuron_model == 'newLIF':
         neuron_model = neuron.BPTTNeuron
+    elif args.neuron_model == 'newLIFTauDep':
+        neuron_model = neuron.BPTTNeuronTauDependent
+    elif args.neuron_model == 'newCLIF':
+        neuron_model = neuron.NewCLIFNeuron
     elif args.neuron_model == 'CLIF':
         neuron_model = neuron.ComplementaryLIFNeuron
     elif args.neuron_model == 'PLIF':
@@ -311,6 +316,7 @@ def main():
         tau_eps=args.tau_eps,
         tau_learn_alpha=args.tau_learn_alpha,
         tau_alpha_share=args.tau_alpha_share,
+        tau_learn_eta=args.tau_learn_eta,
     )
 
     if args.model in ['spiking_resnet18', 'spiking_resnet34', 'spiking_resnet50', 'spiking_resnet101', 'spiking_resnet152']:
