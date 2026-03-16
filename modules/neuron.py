@@ -267,8 +267,10 @@ class BPTTNeuronTauDependent(BPTTNeuron):
     LIF with spike-driven dynamic tau where the log-tau step depends on current tau.
 
     Update rule (tau_mode='spike'):
-      log_tau <- log_tau + (1-spike) * eta * alpha_up * tau
-                         - spike * eta * alpha_down / tau
+      delta_tau <- (1-spike) * alpha_up * tau
+                - spike * alpha_down / tau
+      tau <- (1-eta) * tau + eta * (tau + delta_tau)
+      log_tau <- log(tau)
 
     Compared with BPTTNeuron's fixed +/- step in log-domain, this introduces
     tau-dependent step sizes while preserving binary (spike/non-spike) control.
@@ -282,18 +284,19 @@ class BPTTNeuronTauDependent(BPTTNeuron):
         super().__init__(**kwargs)
         self.tau_learn_eta = bool(tau_learn_eta)
 
-        def _inv_softplus(x: float) -> float:
-            x_t = torch.tensor(float(x), dtype=torch.float32)
-            return float(torch.log(torch.expm1(x_t)).item())
+        def _inv_sigmoid(x: float) -> float:
+            x_clamped = min(max(float(x), 1e-6), 1.0 - 1e-6)
+            x_t = torch.tensor(x_clamped, dtype=torch.float32)
+            return float(torch.log(x_t / (1.0 - x_t)).item())
 
         if self.tau_learn_eta:
-            init_eta = _inv_softplus(max(self.tau_eta, 1e-8))
+            init_eta = _inv_sigmoid(self.tau_eta)
             self.eta_raw = nn.Parameter(torch.tensor(init_eta, dtype=torch.float32))
 
     def _get_eta(self, dtype: torch.dtype, device: torch.device):
         if self.tau_learn_eta:
-            return F.softplus(self.eta_raw).to(dtype=dtype, device=device)
-        return torch.as_tensor(self.tau_eta, dtype=dtype, device=device)
+            return torch.sigmoid(self.eta_raw).to(dtype=dtype, device=device)
+        return torch.as_tensor(self.tau_eta, dtype=dtype, device=device).clamp(0.0, 1.0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         self._ensure_state(x)
@@ -326,10 +329,12 @@ class BPTTNeuronTauDependent(BPTTNeuron):
             alpha_up, alpha_down = self._get_alpha(dtype=self.v.dtype, device=self.v.device)
             eta = self._get_eta(dtype=self.v.dtype, device=self.v.device)
             tau_safe = tau_eff.clamp(min=self.tau_lo, max=self.tau_hi)
-            step_up = (1.0 - s) * (eta * alpha_up * tau_safe)
-            step_down = s * (eta * alpha_down / (tau_safe + self.tau_eps))
-            step = step_up - step_down
-            self.log_tau_state = (self.log_tau_state + step).clamp(self._log_tau_lo, self._log_tau_hi)
+            delta_up = (1.0 - s) * (alpha_up * tau_safe)
+            delta_down = s * (alpha_down / (tau_safe + self.tau_eps))
+            delta_tau = delta_up - delta_down
+            tau_next = (1.0 - eta) * tau_safe + eta * (tau_safe + delta_tau)
+            tau_next = tau_next.clamp(min=self.tau_lo, max=self.tau_hi)
+            self.log_tau_state = torch.log(tau_next)
 
         return spike.to(dtype=x.dtype)
 
@@ -339,9 +344,9 @@ class NewCLIFNeuron(BPTTNeuronTauDependent):
     CLIF + tau-dependent dynamic tau (newLIFTauDep-style).
 
     - CLIF complementary memory update is kept: m <- m * sigmoid(v / tau) + spike
-    - tau update uses tau-dependent log-step:
-        log_tau <- log_tau + (1-spike) * eta * alpha_up * tau
-                           - spike * eta * alpha_down / tau
+    - tau update uses tau-dependent delta + eta interpolation in tau-domain:
+        delta_tau <- (1-spike) * alpha_up * tau - spike * alpha_down / tau
+        tau <- (1-eta) * tau + eta * (tau + delta_tau)
     """
 
     def __init__(self, **kwargs):
