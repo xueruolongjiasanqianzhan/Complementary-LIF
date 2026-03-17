@@ -409,10 +409,12 @@ class NewCLIFNeuron(BPTTNeuronTauDependent):
             alpha_up, alpha_down = self._get_alpha(dtype=self.v.dtype, device=self.v.device)
             eta = self._get_eta(dtype=self.v.dtype, device=self.v.device)
             tau_safe = tau_eff.clamp(min=self.tau_lo, max=self.tau_hi)
-            step_up = (1.0 - s) * (eta * alpha_up * tau_safe)
-            step_down = s * (eta * alpha_down / (tau_safe + self.tau_eps))
-            step = step_up - step_down
-            self.log_tau_state = (self.log_tau_state + step).clamp(self._log_tau_lo, self._log_tau_hi)
+            delta_up = (1.0 - s) * (alpha_up * tau_safe)
+            delta_down = s * (alpha_down / (tau_safe + self.tau_eps))
+            delta_tau = delta_up - delta_down
+            tau_next = (1.0 - eta) * tau_safe + eta * (tau_safe + delta_tau)
+            tau_next = tau_next.clamp(min=self.tau_lo, max=self.tau_hi)
+            self.log_tau_state = torch.log(tau_next)
 
         return spike.to(dtype=x.dtype)
 

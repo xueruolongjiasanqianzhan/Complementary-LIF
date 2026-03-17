@@ -390,23 +390,42 @@ def main():
     ##########################################################
     # output setting
     ##########################################################
-    out_dir = os.path.join(args.out_dir, f'train_{args.dataset}_{args.model}_{args.name}_T{args.T}_tau{args.tau}_e{args.epochs}_bs{args.b}_{args.opt}_lr{args.lr}_wd{args.weight_decay}_SG_{args.surrogate}_drop{args.drop_rate}_losslamb{args.loss_lambda}_labelsmoothing{args.label_smoothing}')
+    run_time = datetime.datetime.now().strftime('%Y%m%d_%H%M')
+    alpha_can_learn = '是' if args.tau_learn_alpha else '否'
+    eta_can_learn = '是' if args.tau_learn_eta else '否'
+    run_name_parts = [
+        f'运行日期{run_time}',
+        f'数据集{args.dataset}',
+        f'模型{args.model}',
+        f'神经元{args.neuron_model}',
+        f'时间步数T{args.T}',
+        f'轮数E{args.epochs}',
+        f'alpha上{args.tau_alpha_up}',
+        f'alpha下{args.tau_alpha_down}',
+        f'eta{args.tau_eta}',
+        f'alpha可学习{alpha_can_learn}',
+        f'eta可学习{eta_can_learn}',
+    ]
 
-    if args.neuron_model != 'LIF':
-        out_dir += f'_{args.neuron_model}_'
+    if args.name:
+        run_name_parts.append(f'备注{args.name}')
 
     if args.lr_scheduler == 'CosALR':
-        out_dir += f'CosALR_{args.T_max}'
+        run_name_parts.append(f'学习率调度CosALR_Tmax{args.T_max}')
     elif args.lr_scheduler == 'StepLR':
-        out_dir += f'StepLR_{args.step_size}_{args.gamma}'
+        run_name_parts.append(f'学习率调度StepLR_step{args.step_size}_gamma{args.gamma}')
     else:
         raise NotImplementedError(args.lr_scheduler)
 
     if args.amp:
-        out_dir += '_amp'
+        run_name_parts.append('混合精度是')
+    else:
+        run_name_parts.append('混合精度否')
 
     if args.cutupmix_auto:
-        out_dir += '_cutupmix_auto'
+        run_name_parts.append('CutUpMix自动增强是')
+
+    out_dir = os.path.join(args.out_dir, '_'.join(run_name_parts))
 
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
