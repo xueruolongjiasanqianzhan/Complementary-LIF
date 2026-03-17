@@ -201,6 +201,7 @@ def main():
             # augmentation.RandomSizedCrop(48),
             augmentation.RandomHorizontalFlip(),
             augmentation.RandomRotation(),
+            Resize(48),
             ToTensor(),
 
         ])
