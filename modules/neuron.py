@@ -114,6 +114,92 @@ class ReLU(nn.Module):
 
 
 
+class LSLIFNeuron(nn.Module):
+    """
+    LIF variant with a permanently increasing threshold level and history-preserving reset.
+
+    Let the base threshold be ``v_threshold = n`` and the current level be ``k``.
+    The effective firing threshold is ``k * n``. Whenever a spike occurs, the level
+    is incremented permanently and the post-spike membrane is reset to
+
+      v_next = (k_after - 1) * n + clip(decay(v_t), 0, n - eps)
+
+    so that the next membrane state stays within the interval
+    ``[(k_after - 1) * n, k_after * n)``.
+    """
+
+    def __init__(
+        self,
+        tau: float = 2.0,
+        decay_input: bool = False,
+        v_threshold: float = 1.0,
+        v_reset: Optional[float] = None,
+        surrogate_function: Optional[Callable] = None,
+        detach_reset: bool = False,
+        tau_eps: float = 1e-6,
+        reset_eps: float = 1e-6,
+        **kwargs,
+    ):
+        super().__init__()
+        self.tau = float(tau)
+        self.decay_input = bool(decay_input)
+        self.v_threshold = float(v_threshold)
+        self.v_reset = v_reset
+        self.detach_reset = bool(detach_reset)
+        self.tau_eps = float(tau_eps)
+        self.reset_eps = float(reset_eps)
+        self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
+
+        self.v = None
+        self.level = None
+
+    def reset(self):
+        self.v = None
+        self.level = None
+
+    def _ensure_state(self, x: torch.Tensor):
+        need_init = (
+            self.v is None
+            or self.v.shape != x.shape
+            or self.v.device != x.device
+        )
+        if need_init:
+            self.v = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.level = torch.ones_like(x, dtype=torch.float32, device=x.device)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+
+        tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
+        if self.decay_input:
+            self.v = self.v + (x_f - self.v) / (tau_eff + self.tau_eps)
+        else:
+            decay = 1.0 - 1.0 / (tau_eff + self.tau_eps)
+            decay = torch.clamp(decay, 0.0, 1.0)
+            self.v = self.v * decay + x_f
+
+        base_threshold = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+        effective_threshold = self.level * base_threshold
+        spike = self.surrogate_function(self.v - effective_threshold)
+
+        spike_state = spike.detach()
+        level_after = self.level + spike_state
+
+        if self.decay_input:
+            decayed_v = self.v + (0.0 - self.v) / (tau_eff + self.tau_eps)
+        else:
+            decayed_v = self.v * decay
+
+        retained_residual = torch.clamp(decayed_v, min=0.0, max=max(self.v_threshold - self.reset_eps, 0.0))
+        baseline = (level_after - 1.0) * base_threshold
+        reset_v = baseline + retained_residual
+        self.v = torch.where(spike_state.bool(), reset_v, self.v)
+        self.level = level_after
+
+        return spike.to(dtype=x.dtype)
+
+
 class VanillaLIFNeuron(LIFNode_sj):
     def __init__(self, tau: float = 2., decay_input: bool = False, v_threshold: float = 1.,
                  v_reset: float = None, surrogate_function: Callable = Rectangle(),
@@ -125,8 +211,8 @@ class BPTTNeuron(nn.Module):
     Baseline LIF with surrogate gradient and membrane state v (fp32).
 
     Spike-driven dynamic tau with multiplicative (log-domain) step:
-      log_tau <- log_tau + eta * (+alpha_up)     if spike==0  (more sensitive, tau increases)
-      log_tau <- log_tau - eta * (alpha_down)   if spike==1  (more suppressive, tau decreases)
+      log_tau <- log_tau - eta * (alpha_up)     if spike==0  (more leaky, tau decreases)
+      log_tau <- log_tau + eta * (+alpha_down)  if spike==1  (more retentive, tau increases)
       tau = exp(log_tau), and clamp tau in [tau_lo, tau_hi] by clamping log_tau.
     """
 
@@ -256,7 +342,7 @@ class BPTTNeuron(nn.Module):
         if self.tau_mode == 'spike':
             s = spike.detach() if self.tau_detach_spike else spike
             alpha_up, alpha_down = self._get_alpha(dtype=self.v.dtype, device=self.v.device)
-            step = (1.0 - s) * (self.tau_eta * alpha_up) - s * (self.tau_eta * alpha_down)
+            step = s * (self.tau_eta * alpha_down) - (1.0 - s) * (self.tau_eta * alpha_up)
             self.log_tau_state = (self.log_tau_state + step).clamp(self._log_tau_lo, self._log_tau_hi)
 
         return spike.to(dtype=x.dtype)
@@ -267,13 +353,14 @@ class BPTTNeuronTauDependent(BPTTNeuron):
     LIF with spike-driven dynamic tau where the log-tau step depends on current tau.
 
     Update rule (tau_mode='spike'):
-      delta_tau <- (1-spike) * alpha_up * tau
-                - spike * alpha_down / tau
+      delta_tau <- spike * alpha_down * tau
+                - (1-spike) * alpha_up / tau
       tau <- (1-eta) * tau + eta * (tau + delta_tau)
       log_tau <- log(tau)
 
     Compared with BPTTNeuron's fixed +/- step in log-domain, this introduces
-    tau-dependent step sizes while preserving binary (spike/non-spike) control.
+    tau-dependent step sizes while preserving binary (spike/non-spike) control,
+    now with spikes increasing retention and non-spikes increasing leakage.
     """
 
     def __init__(
@@ -329,8 +416,8 @@ class BPTTNeuronTauDependent(BPTTNeuron):
             alpha_up, alpha_down = self._get_alpha(dtype=self.v.dtype, device=self.v.device)
             eta = self._get_eta(dtype=self.v.dtype, device=self.v.device)
             tau_safe = tau_eff.clamp(min=self.tau_lo, max=self.tau_hi)
-            delta_up = (1.0 - s) * (alpha_up * tau_safe)
-            delta_down = s * (alpha_down / (tau_safe + self.tau_eps))
+            delta_up = s * (alpha_down * tau_safe)
+            delta_down = (1.0 - s) * (alpha_up / (tau_safe + self.tau_eps))
             delta_tau = delta_up - delta_down
             tau_next = (1.0 - eta) * tau_safe + eta * (tau_safe + delta_tau)
             tau_next = tau_next.clamp(min=self.tau_lo, max=self.tau_hi)
@@ -345,7 +432,7 @@ class NewCLIFNeuron(BPTTNeuronTauDependent):
 
     - CLIF complementary memory update is kept: m <- m * sigmoid(v / tau) + spike
     - tau update uses tau-dependent delta + eta interpolation in tau-domain:
-        delta_tau <- (1-spike) * alpha_up * tau - spike * alpha_down / tau
+        delta_tau <- spike * alpha_down * tau - (1-spike) * alpha_up / tau
         tau <- (1-eta) * tau + eta * (tau + delta_tau)
     """
 
@@ -409,10 +496,12 @@ class NewCLIFNeuron(BPTTNeuronTauDependent):
             alpha_up, alpha_down = self._get_alpha(dtype=self.v.dtype, device=self.v.device)
             eta = self._get_eta(dtype=self.v.dtype, device=self.v.device)
             tau_safe = tau_eff.clamp(min=self.tau_lo, max=self.tau_hi)
-            step_up = (1.0 - s) * (eta * alpha_up * tau_safe)
-            step_down = s * (eta * alpha_down / (tau_safe + self.tau_eps))
-            step = step_up - step_down
-            self.log_tau_state = (self.log_tau_state + step).clamp(self._log_tau_lo, self._log_tau_hi)
+            delta_up = s * (alpha_down * tau_safe)
+            delta_down = (1.0 - s) * (alpha_up / (tau_safe + self.tau_eps))
+            delta_tau = delta_up - delta_down
+            tau_next = (1.0 - eta) * tau_safe + eta * (tau_safe + delta_tau)
+            tau_next = tau_next.clamp(min=self.tau_lo, max=self.tau_hi)
+            self.log_tau_state = torch.log(tau_next)
 
         return spike.to(dtype=x.dtype)
 
