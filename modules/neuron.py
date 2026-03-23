@@ -114,6 +114,92 @@ class ReLU(nn.Module):
 
 
 
+class LSLIFNeuron(nn.Module):
+    """
+    LIF variant with a permanently increasing threshold level and history-preserving reset.
+
+    Let the base threshold be ``v_threshold = n`` and the current level be ``k``.
+    The effective firing threshold is ``k * n``. Whenever a spike occurs, the level
+    is incremented permanently and the post-spike membrane is reset to
+
+      v_next = (k_after - 1) * n + clip(decay(v_t), 0, n - eps)
+
+    so that the next membrane state stays within the interval
+    ``[(k_after - 1) * n, k_after * n)``.
+    """
+
+    def __init__(
+        self,
+        tau: float = 2.0,
+        decay_input: bool = False,
+        v_threshold: float = 1.0,
+        v_reset: Optional[float] = None,
+        surrogate_function: Optional[Callable] = None,
+        detach_reset: bool = False,
+        tau_eps: float = 1e-6,
+        reset_eps: float = 1e-6,
+        **kwargs,
+    ):
+        super().__init__()
+        self.tau = float(tau)
+        self.decay_input = bool(decay_input)
+        self.v_threshold = float(v_threshold)
+        self.v_reset = v_reset
+        self.detach_reset = bool(detach_reset)
+        self.tau_eps = float(tau_eps)
+        self.reset_eps = float(reset_eps)
+        self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
+
+        self.v = None
+        self.level = None
+
+    def reset(self):
+        self.v = None
+        self.level = None
+
+    def _ensure_state(self, x: torch.Tensor):
+        need_init = (
+            self.v is None
+            or self.v.shape != x.shape
+            or self.v.device != x.device
+        )
+        if need_init:
+            self.v = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.level = torch.ones_like(x, dtype=torch.float32, device=x.device)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+
+        tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
+        if self.decay_input:
+            self.v = self.v + (x_f - self.v) / (tau_eff + self.tau_eps)
+        else:
+            decay = 1.0 - 1.0 / (tau_eff + self.tau_eps)
+            decay = torch.clamp(decay, 0.0, 1.0)
+            self.v = self.v * decay + x_f
+
+        base_threshold = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+        effective_threshold = self.level * base_threshold
+        spike = self.surrogate_function(self.v - effective_threshold)
+
+        spike_state = spike.detach()
+        level_after = self.level + spike_state
+
+        if self.decay_input:
+            decayed_v = self.v + (0.0 - self.v) / (tau_eff + self.tau_eps)
+        else:
+            decayed_v = self.v * decay
+
+        retained_residual = torch.clamp(decayed_v, min=0.0, max=max(self.v_threshold - self.reset_eps, 0.0))
+        baseline = (level_after - 1.0) * base_threshold
+        reset_v = baseline + retained_residual
+        self.v = torch.where(spike_state.bool(), reset_v, self.v)
+        self.level = level_after
+
+        return spike.to(dtype=x.dtype)
+
+
 class VanillaLIFNeuron(LIFNode_sj):
     def __init__(self, tau: float = 2., decay_input: bool = False, v_threshold: float = 1.,
                  v_reset: float = None, surrogate_function: Callable = Rectangle(),

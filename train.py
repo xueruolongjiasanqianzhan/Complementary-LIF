@@ -77,7 +77,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), LSLIF, CLIF, PLIF, relu')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
@@ -294,6 +294,8 @@ def main():
         neuron_model = neuron.BPTTNeuronTauDependent
     elif args.neuron_model == 'newCLIF':
         neuron_model = neuron.NewCLIFNeuron
+    elif args.neuron_model == 'LSLIF':
+        neuron_model = neuron.LSLIFNeuron
     elif args.neuron_model == 'CLIF':
         neuron_model = neuron.ComplementaryLIFNeuron
     elif args.neuron_model == 'PLIF':
