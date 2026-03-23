@@ -125,8 +125,8 @@ class BPTTNeuron(nn.Module):
     Baseline LIF with surrogate gradient and membrane state v (fp32).
 
     Spike-driven dynamic tau with multiplicative (log-domain) step:
-      log_tau <- log_tau + eta * (+alpha_up)     if spike==0  (more sensitive, tau increases)
-      log_tau <- log_tau - eta * (alpha_down)   if spike==1  (more suppressive, tau decreases)
+      log_tau <- log_tau - eta * (alpha_up)     if spike==0  (more leaky, tau decreases)
+      log_tau <- log_tau + eta * (+alpha_down)  if spike==1  (more retentive, tau increases)
       tau = exp(log_tau), and clamp tau in [tau_lo, tau_hi] by clamping log_tau.
     """
 
@@ -256,7 +256,7 @@ class BPTTNeuron(nn.Module):
         if self.tau_mode == 'spike':
             s = spike.detach() if self.tau_detach_spike else spike
             alpha_up, alpha_down = self._get_alpha(dtype=self.v.dtype, device=self.v.device)
-            step = (1.0 - s) * (self.tau_eta * alpha_up) - s * (self.tau_eta * alpha_down)
+            step = s * (self.tau_eta * alpha_down) - (1.0 - s) * (self.tau_eta * alpha_up)
             self.log_tau_state = (self.log_tau_state + step).clamp(self._log_tau_lo, self._log_tau_hi)
 
         return spike.to(dtype=x.dtype)
@@ -267,13 +267,14 @@ class BPTTNeuronTauDependent(BPTTNeuron):
     LIF with spike-driven dynamic tau where the log-tau step depends on current tau.
 
     Update rule (tau_mode='spike'):
-      delta_tau <- (1-spike) * alpha_up * tau
-                - spike * alpha_down / tau
+      delta_tau <- spike * alpha_down * tau
+                - (1-spike) * alpha_up / tau
       tau <- (1-eta) * tau + eta * (tau + delta_tau)
       log_tau <- log(tau)
 
     Compared with BPTTNeuron's fixed +/- step in log-domain, this introduces
-    tau-dependent step sizes while preserving binary (spike/non-spike) control.
+    tau-dependent step sizes while preserving binary (spike/non-spike) control,
+    now with spikes increasing retention and non-spikes increasing leakage.
     """
 
     def __init__(
@@ -329,8 +330,8 @@ class BPTTNeuronTauDependent(BPTTNeuron):
             alpha_up, alpha_down = self._get_alpha(dtype=self.v.dtype, device=self.v.device)
             eta = self._get_eta(dtype=self.v.dtype, device=self.v.device)
             tau_safe = tau_eff.clamp(min=self.tau_lo, max=self.tau_hi)
-            delta_up = (1.0 - s) * (alpha_up * tau_safe)
-            delta_down = s * (alpha_down / (tau_safe + self.tau_eps))
+            delta_up = s * (alpha_down * tau_safe)
+            delta_down = (1.0 - s) * (alpha_up / (tau_safe + self.tau_eps))
             delta_tau = delta_up - delta_down
             tau_next = (1.0 - eta) * tau_safe + eta * (tau_safe + delta_tau)
             tau_next = tau_next.clamp(min=self.tau_lo, max=self.tau_hi)
@@ -345,7 +346,7 @@ class NewCLIFNeuron(BPTTNeuronTauDependent):
 
     - CLIF complementary memory update is kept: m <- m * sigmoid(v / tau) + spike
     - tau update uses tau-dependent delta + eta interpolation in tau-domain:
-        delta_tau <- (1-spike) * alpha_up * tau - spike * alpha_down / tau
+        delta_tau <- spike * alpha_down * tau - (1-spike) * alpha_up / tau
         tau <- (1-eta) * tau + eta * (tau + delta_tau)
     """
 
@@ -409,10 +410,12 @@ class NewCLIFNeuron(BPTTNeuronTauDependent):
             alpha_up, alpha_down = self._get_alpha(dtype=self.v.dtype, device=self.v.device)
             eta = self._get_eta(dtype=self.v.dtype, device=self.v.device)
             tau_safe = tau_eff.clamp(min=self.tau_lo, max=self.tau_hi)
-            step_up = (1.0 - s) * (eta * alpha_up * tau_safe)
-            step_down = s * (eta * alpha_down / (tau_safe + self.tau_eps))
-            step = step_up - step_down
-            self.log_tau_state = (self.log_tau_state + step).clamp(self._log_tau_lo, self._log_tau_hi)
+            delta_up = s * (alpha_down * tau_safe)
+            delta_down = (1.0 - s) * (alpha_up / (tau_safe + self.tau_eps))
+            delta_tau = delta_up - delta_down
+            tau_next = (1.0 - eta) * tau_safe + eta * (tau_safe + delta_tau)
+            tau_next = tau_next.clamp(min=self.tau_lo, max=self.tau_hi)
+            self.log_tau_state = torch.log(tau_next)
 
         return spike.to(dtype=x.dtype)
 
