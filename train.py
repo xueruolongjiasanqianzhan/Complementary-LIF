@@ -417,6 +417,14 @@ def main():
         f'alpha可学习{alpha_can_learn}',
         f'eta可学习{eta_can_learn}',
     ]
+    if args.neuron_model == 'LSLIF':
+        history_weight_can_learn = '是' if args.history_learn_weight else '否'
+        run_name_parts.extend([
+            f'历史权重{args.history_weight}',
+            f'历史幂次{args.history_power}',
+            f'历史eps{args.history_eps}',
+            f'历史权重可学习{history_weight_can_learn}',
+        ])
 
     if args.name:
         run_name_parts.append(f'备注{args.name}')
