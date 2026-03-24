@@ -74,7 +74,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), LSLIF, CLIF, PLIF, relu')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
@@ -82,12 +82,17 @@ def main():
     parser.add_argument('-tau_lo', type=float, default=None, help='for newLIF only: tau lower bound')
     parser.add_argument('-tau_hi', type=float, default=None, help='for newLIF only: tau upper bound')
     parser.add_argument('-tau_eta', type=float, default=1.0, help='for newLIF only: tau update scale')
-    parser.add_argument('-tau_alpha_up', type=float, default=0.02, help='for newLIF only: alpha when no spike')
-    parser.add_argument('-tau_alpha_down', type=float, default=0.02, help='for newLIF only: alpha when spike')
+    parser.add_argument('-tau_alpha_up', type=float, default=0.02, help='for newLIF only: alpha when no spike (drives more leakage)')
+    parser.add_argument('-tau_alpha_down', type=float, default=0.02, help='for newLIF only: alpha when spike (drives more retention)')
     parser.add_argument('-tau_detach_spike', type=bool, default=True, help='for newLIF only: detach spike in tau update')
     parser.add_argument('-tau_eps', type=float, default=1e-6, help='for newLIF only: epsilon for numerical stability')
     parser.add_argument('-tau_learn_alpha', action='store_true', help='for newLIF only: make alpha learnable')
     parser.add_argument('-tau_alpha_share', action='store_true', help='for newLIF only: share alpha_up and alpha_down')
+    parser.add_argument('-tau_learn_eta', action='store_true', help='for newLIFTauDep/newCLIF only: make eta learnable')
+    parser.add_argument('-history_weight', type=float, default=1.0, help='for LSLIF only: auxiliary history branch weight')
+    parser.add_argument('-history_power', type=float, default=1.0, help='for LSLIF only: normalization power for history branch')
+    parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF only: epsilon for history normalization')
+    parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF only: make history_weight learnable')
 
     args = parser.parse_args()
     print(args)
@@ -292,6 +297,12 @@ def main():
         neuron_model = neuron.VanillaLIFNeuron
     elif args.neuron_model == 'newLIF':
         neuron_model = neuron.BPTTNeuron
+    elif args.neuron_model == 'newLIFTauDep':
+        neuron_model = neuron.BPTTNeuronTauDependent
+    elif args.neuron_model == 'newCLIF':
+        neuron_model = neuron.NewCLIFNeuron
+    elif args.neuron_model == 'LSLIF':
+        neuron_model = neuron.LSLIFNeuron
     elif args.neuron_model == 'CLIF':
         neuron_model = neuron.ComplementaryLIFNeuron
     elif args.neuron_model == 'PLIF':
@@ -315,6 +326,7 @@ def main():
         tau_eps=args.tau_eps,
         tau_learn_alpha=args.tau_learn_alpha,
         tau_alpha_share=args.tau_alpha_share,
+        tau_learn_eta=getattr(args, 'tau_learn_eta', False),
     )
 
     if args.model in ['spiking_resnet18', 'spiking_resnet34', 'spiking_resnet50', 'spiking_resnet101',
