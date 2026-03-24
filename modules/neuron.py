@@ -155,14 +155,19 @@ class LSLIFNeuron(nn.Module):
         self.history_power = float(history_power)
         self.history_eps = float(history_eps)
         self.history_learn_weight = bool(history_learn_weight)
+        self.history_weight_lo = -0.8
+        self.history_weight_hi = 0.8
         self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
 
-        def _inv_softplus(x: float) -> float:
-            x_t = torch.tensor(float(x), dtype=torch.float32)
-            return float(torch.log(torch.expm1(x_t)).item())
+        def _inv_sigmoid(x: float) -> float:
+            x_t = torch.tensor(float(x), dtype=torch.float32).clamp(1e-6, 1.0 - 1e-6)
+            return float(torch.log(x_t / (1.0 - x_t)).item())
 
         if self.history_learn_weight:
-            init_raw = _inv_softplus(max(self.history_weight, 1e-6))
+            init_weight = float(np.clip(self.history_weight, self.history_weight_lo, self.history_weight_hi))
+            scale = self.history_weight_hi - self.history_weight_lo
+            init_unit = (init_weight - self.history_weight_lo) / max(scale, 1e-6)
+            init_raw = _inv_sigmoid(init_unit)
             self.history_weight_raw = nn.Parameter(torch.tensor(init_raw, dtype=torch.float32))
 
         self.v = None
@@ -188,7 +193,9 @@ class LSLIFNeuron(nn.Module):
 
     def _get_history_weight(self, dtype: torch.dtype, device: torch.device):
         if self.history_learn_weight:
-            return F.softplus(self.history_weight_raw).to(dtype=dtype, device=device)
+            weight_unit = torch.sigmoid(self.history_weight_raw)
+            weight = self.history_weight_lo + (self.history_weight_hi - self.history_weight_lo) * weight_unit
+            return weight.to(dtype=dtype, device=device)
         return torch.as_tensor(self.history_weight, dtype=dtype, device=device)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -217,10 +224,10 @@ class LSLIFNeuron(nn.Module):
 
         rs = spike.detach() if self.detach_reset else spike
         if self.v_reset is None:
-            self.v = total_mem - rs * th_f
+            self.v = m_t - rs * th_f
         else:
             v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
-            self.v = torch.where(rs.bool(), v_reset_t, total_mem)
+            self.v = torch.where(rs.bool(), v_reset_t, m_t)
 
         self.n = n_t
         return spike.to(dtype=x.dtype)

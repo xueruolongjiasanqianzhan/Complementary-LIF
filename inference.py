@@ -327,6 +327,10 @@ def main():
         tau_learn_alpha=args.tau_learn_alpha,
         tau_alpha_share=args.tau_alpha_share,
         tau_learn_eta=getattr(args, 'tau_learn_eta', False),
+        history_weight=args.history_weight,
+        history_power=args.history_power,
+        history_eps=args.history_eps,
+        history_learn_weight=args.history_learn_weight,
     )
 
     if args.model in ['spiking_resnet18', 'spiking_resnet34', 'spiking_resnet50', 'spiking_resnet101',
@@ -406,6 +410,8 @@ def main():
 
     if args.neuron_model != 'LIF':
         out_dir += f'_{args.neuron_model}_'
+    if args.neuron_model == 'LSLIF':
+        out_dir += f'_hw{args.history_weight}_hp{args.history_power}_he{args.history_eps}_hlw{int(args.history_learn_weight)}'
 
     # if args.lr_scheduler == 'CosALR':
     #     out_dir += f'CosALR_{args.T_max}'
