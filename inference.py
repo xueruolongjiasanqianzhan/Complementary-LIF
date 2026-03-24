@@ -89,6 +89,10 @@ def main():
     parser.add_argument('-tau_learn_alpha', action='store_true', help='for newLIF only: make alpha learnable')
     parser.add_argument('-tau_alpha_share', action='store_true', help='for newLIF only: share alpha_up and alpha_down')
     parser.add_argument('-tau_learn_eta', action='store_true', help='for newLIFTauDep/newCLIF only: make eta learnable')
+    parser.add_argument('-history_weight', type=float, default=1.0, help='for LSLIF only: auxiliary history branch weight')
+    parser.add_argument('-history_power', type=float, default=1.0, help='for LSLIF only: normalization power for history branch')
+    parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF only: epsilon for history normalization')
+    parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF only: make history_weight learnable')
 
     args = parser.parse_args()
     print(args)

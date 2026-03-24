@@ -141,6 +141,7 @@ class LSLIFNeuron(nn.Module):
         history_weight: float = 1.0,
         history_power: float = 1.0,
         history_eps: float = 1e-6,
+        history_learn_weight: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -153,7 +154,16 @@ class LSLIFNeuron(nn.Module):
         self.history_weight = float(history_weight)
         self.history_power = float(history_power)
         self.history_eps = float(history_eps)
+        self.history_learn_weight = bool(history_learn_weight)
         self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
+
+        def _inv_softplus(x: float) -> float:
+            x_t = torch.tensor(float(x), dtype=torch.float32)
+            return float(torch.log(torch.expm1(x_t)).item())
+
+        if self.history_learn_weight:
+            init_raw = _inv_softplus(max(self.history_weight, 1e-6))
+            self.history_weight_raw = nn.Parameter(torch.tensor(init_raw, dtype=torch.float32))
 
         self.v = None
         self.n = None
@@ -175,6 +185,12 @@ class LSLIFNeuron(nn.Module):
             self.n = torch.zeros_like(x, dtype=torch.float32, device=x.device)
             self.step_count = 0
 
+
+    def _get_history_weight(self, dtype: torch.dtype, device: torch.device):
+        if self.history_learn_weight:
+            return F.softplus(self.history_weight_raw).to(dtype=dtype, device=device)
+        return torch.as_tensor(self.history_weight, dtype=dtype, device=device)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         self._ensure_state(x)
         x_f = x.to(torch.float32)
@@ -192,7 +208,8 @@ class LSLIFNeuron(nn.Module):
         self.step_count += 1
         step_t = torch.as_tensor(float(self.step_count), device=m_t.device, dtype=m_t.dtype)
         norm = torch.pow(step_t + self.history_eps, self.history_power)
-        history_term = self.history_weight * (n_t / norm)
+        history_weight = self._get_history_weight(dtype=m_t.dtype, device=m_t.device)
+        history_term = history_weight * (n_t / norm)
         total_mem = m_t + history_term
 
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
