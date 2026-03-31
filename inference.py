@@ -93,6 +93,7 @@ def main():
     parser.add_argument('-history_power', type=float, default=1.0, help='for LSLIF only: normalization power for history branch')
     parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF only: epsilon for history normalization')
     parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF only: make history_weight learnable')
+    parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike'], help='for LSLIF only: when to add history branch (all steps or only after neuron has fired)')
 
     args = parser.parse_args()
     print(args)
@@ -331,6 +332,7 @@ def main():
         history_power=args.history_power,
         history_eps=args.history_eps,
         history_learn_weight=args.history_learn_weight,
+        history_mode=args.history_mode,
     )
 
     if args.model in ['spiking_resnet18', 'spiking_resnet34', 'spiking_resnet50', 'spiking_resnet101',
@@ -411,7 +413,7 @@ def main():
     if args.neuron_model != 'LIF':
         out_dir += f'_{args.neuron_model}_'
     if args.neuron_model == 'LSLIF':
-        out_dir += f'_hw{args.history_weight}_hp{args.history_power}_he{args.history_eps}_hlw{int(args.history_learn_weight)}'
+        out_dir += f'_hw{args.history_weight}_hp{args.history_power}_he{args.history_eps}_hm{args.history_mode}_hlw{int(args.history_learn_weight)}'
 
     # if args.lr_scheduler == 'CosALR':
     #     out_dir += f'CosALR_{args.T_max}'

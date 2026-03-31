@@ -142,6 +142,7 @@ class LSLIFNeuron(nn.Module):
         history_power: float = 1.0,
         history_eps: float = 1e-6,
         history_learn_weight: bool = False,
+        history_mode: str = 'all',
         **kwargs,
     ):
         super().__init__()
@@ -155,6 +156,9 @@ class LSLIFNeuron(nn.Module):
         self.history_power = float(history_power)
         self.history_eps = float(history_eps)
         self.history_learn_weight = bool(history_learn_weight)
+        self.history_mode = str(history_mode).lower()
+        if self.history_mode not in {'all', 'post_spike'}:
+            raise ValueError(f"Unsupported history_mode: {history_mode}. Expected 'all' or 'post_spike'.")
         self.history_weight_lo = -0.8
         self.history_weight_hi = 0.8
         self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
@@ -172,11 +176,13 @@ class LSLIFNeuron(nn.Module):
 
         self.v = None
         self.n = None
+        self.has_fired = None
         self.step_count = 0
 
     def reset(self):
         self.v = None
         self.n = None
+        self.has_fired = None
         self.step_count = 0
 
     def _ensure_state(self, x: torch.Tensor):
@@ -188,6 +194,7 @@ class LSLIFNeuron(nn.Module):
         if need_init:
             self.v = torch.zeros_like(x, dtype=torch.float32, device=x.device)
             self.n = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.has_fired = torch.zeros_like(x, dtype=torch.bool, device=x.device)
             self.step_count = 0
 
 
@@ -217,6 +224,8 @@ class LSLIFNeuron(nn.Module):
         norm = torch.pow(step_t + self.history_eps, self.history_power)
         history_weight = self._get_history_weight(dtype=m_t.dtype, device=m_t.device)
         history_term = history_weight * (n_t / norm)
+        if self.history_mode == 'post_spike':
+            history_term = history_term * self.has_fired.to(dtype=history_term.dtype)
         total_mem = m_t + history_term
 
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
@@ -230,6 +239,7 @@ class LSLIFNeuron(nn.Module):
             self.v = torch.where(rs.bool(), v_reset_t, m_t)
 
         self.n = n_t
+        self.has_fired = torch.logical_or(self.has_fired, rs.bool())
         return spike.to(dtype=x.dtype)
 
 

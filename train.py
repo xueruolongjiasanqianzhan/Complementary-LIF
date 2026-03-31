@@ -96,6 +96,7 @@ def main():
     parser.add_argument('-history_power', type=float, default=1.0, help='for LSLIF only: normalization power for history branch')
     parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF only: epsilon for history normalization')
     parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF only: make history_weight learnable')
+    parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike'], help='for LSLIF only: when to add history branch (all steps or only after neuron has fired)')
 
     args = parser.parse_args()
     print(args)
@@ -328,6 +329,7 @@ def main():
         history_power=args.history_power,
         history_eps=args.history_eps,
         history_learn_weight=args.history_learn_weight,
+        history_mode=args.history_mode,
     )
 
     if args.model in ['spiking_resnet18', 'spiking_resnet34', 'spiking_resnet50', 'spiking_resnet101', 'spiking_resnet152']:
@@ -423,6 +425,7 @@ def main():
             f'历史权重{args.history_weight}',
             f'历史幂次{args.history_power}',
             f'历史eps{args.history_eps}',
+            f'历史模式{args.history_mode}',
             f'历史权重可学习{history_weight_can_learn}',
         ])
 
