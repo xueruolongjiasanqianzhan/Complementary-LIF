@@ -96,7 +96,11 @@ def main():
     parser.add_argument('-history_power', type=float, default=1.0, help='for LSLIF only: normalization power for history branch')
     parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF only: epsilon for history normalization')
     parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF only: make history_weight learnable')
-    parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike'], help='for LSLIF only: when to add history branch (all steps or only after neuron has fired)')
+    parser.add_argument('-history_weight_lo', type=float, default=-0.8, help='for LSLIF only: lower bound for learnable history_weight')
+    parser.add_argument('-history_weight_hi', type=float, default=0.8, help='for LSLIF only: upper bound for learnable history_weight')
+    parser.add_argument('-history_weight_per_step', action='store_true', help='for LSLIF only: use one learnable history_weight per time-step')
+    parser.add_argument('-history_learn_power', action='store_true', help='for LSLIF only: make history_power learnable')
+    parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike', 'half'], help='for LSLIF only: history mode (all, post_spike, or half: shallow post_spike and deep all)')
 
     args = parser.parse_args()
     print(args)
@@ -329,6 +333,11 @@ def main():
         history_power=args.history_power,
         history_eps=args.history_eps,
         history_learn_weight=args.history_learn_weight,
+        history_weight_lo=args.history_weight_lo,
+        history_weight_hi=args.history_weight_hi,
+        history_weight_per_step=args.history_weight_per_step,
+        history_max_steps=args.T,
+        history_learn_power=args.history_learn_power,
         history_mode=args.history_mode,
     )
 
@@ -421,12 +430,18 @@ def main():
     ]
     if args.neuron_model == 'LSLIF':
         history_weight_can_learn = '是' if args.history_learn_weight else '否'
+        history_weight_per_step = '是' if args.history_weight_per_step else '否'
+        history_power_can_learn = '是' if args.history_learn_power else '否'
         run_name_parts.extend([
             f'历史权重{args.history_weight}',
             f'历史幂次{args.history_power}',
             f'历史eps{args.history_eps}',
             f'历史模式{args.history_mode}',
             f'历史权重可学习{history_weight_can_learn}',
+            f'历史权重逐时间步{history_weight_per_step}',
+            f'历史权重下界{args.history_weight_lo}',
+            f'历史权重上界{args.history_weight_hi}',
+            f'历史幂次可学习{history_power_can_learn}',
         ])
 
     if args.name:

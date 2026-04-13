@@ -8,9 +8,24 @@ __all__ = [
 from torch import nn
 
 
+def _build_neuron(neuron: callable, kwargs: dict):
+    neuron_kwargs = dict(kwargs)
+    counter = neuron_kwargs.get('_layer_counter')
+    if neuron_kwargs.get('history_mode', 'all') == 'half' and isinstance(counter, dict):
+        idx = int(counter.get('i', 0))
+        total = int(max(1, counter.get('total', 1)))
+        neuron_kwargs['layer_index'] = idx
+        neuron_kwargs['total_layers'] = total
+        counter['i'] = idx + 1
+    neuron_kwargs.pop('_layer_counter', None)
+    return neuron(**neuron_kwargs)
+
+
 class SNN5(nn.Module):
     def __init__(self, neuron, num_classes=10, dropout=0.0, **kwargs):
         super(SNN5, self).__init__()
+        kwargs = dict(kwargs)
+        kwargs['_layer_counter'] = {'i': 0, 'total': 5}
         pool = nn.Sequential(nn.AvgPool2d(2))
         self.features = nn.Sequential(
             Layer(3, 16, 3, 1, 1, neuron, **kwargs),
@@ -44,6 +59,8 @@ class SNN5(nn.Module):
 class SNN5_noAP(nn.Module):
     def __init__(self, neuron, num_classes=10, dropout=0.0, **kwargs):
         super(SNN5_noAP, self).__init__()
+        kwargs = dict(kwargs)
+        kwargs['_layer_counter'] = {'i': 0, 'total': 5}
         pool = nn.Sequential(nn.AvgPool2d(2))
         # pool = APLayer(2)
         self.features = nn.Sequential(
@@ -86,7 +103,7 @@ class Layer(nn.Module):
             nn.Conv2d(in_plane, out_plane, kernel_size, stride, padding),
             nn.BatchNorm2d(out_plane)
         )
-        self.act = neuron(**kwargs)
+        self.act = _build_neuron(neuron, kwargs)
 
     def forward(self, x):
         x = self.fwd(x)
@@ -98,6 +115,8 @@ class Layer(nn.Module):
 class VGGSNN(nn.Module):
     def __init__(self, neuron, num_classes=10, neuron_dropout=0.0, **kwargs):
         super(VGGSNN, self).__init__()
+        kwargs = dict(kwargs)
+        kwargs['_layer_counter'] = {'i': 0, 'total': 8}
         pool = nn.Sequential(nn.AvgPool2d(2))
         # pool = APLayer(2)
         self.features = nn.Sequential(
@@ -137,6 +156,8 @@ class VGGSNN(nn.Module):
 class VGGSNNwoAP(nn.Module):
     def __init__(self, neuron, num_classes=10, neuron_dropout=0.0, **kwargs):
         super(VGGSNNwoAP, self).__init__()
+        kwargs = dict(kwargs)
+        kwargs['_layer_counter'] = {'i': 0, 'total': 8}
         self.features = nn.Sequential(
             Layer(2, 64, 3, 1, 1, neuron, **kwargs),
             Layer(64, 128, 3, 2, 1, neuron, **kwargs),
