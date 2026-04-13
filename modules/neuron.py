@@ -142,7 +142,14 @@ class LSLIFNeuron(nn.Module):
         history_power: float = 1.0,
         history_eps: float = 1e-6,
         history_learn_weight: bool = False,
+        history_weight_lo: float = -0.8,
+        history_weight_hi: float = 0.8,
+        history_weight_per_step: bool = False,
+        history_max_steps: int = 16,
+        history_learn_power: bool = False,
         history_mode: str = 'all',
+        layer_index: Optional[int] = None,
+        total_layers: Optional[int] = None,
         **kwargs,
     ):
         super().__init__()
@@ -156,11 +163,25 @@ class LSLIFNeuron(nn.Module):
         self.history_power = float(history_power)
         self.history_eps = float(history_eps)
         self.history_learn_weight = bool(history_learn_weight)
+        self.history_weight_per_step = bool(history_weight_per_step)
+        self.history_max_steps = int(max(1, history_max_steps))
+        self.history_learn_power = bool(history_learn_power)
         self.history_mode = str(history_mode).lower()
-        if self.history_mode not in {'all', 'post_spike'}:
-            raise ValueError(f"Unsupported history_mode: {history_mode}. Expected 'all' or 'post_spike'.")
-        self.history_weight_lo = -0.8
-        self.history_weight_hi = 0.8
+        if self.history_mode not in {'all', 'post_spike', 'half'}:
+            raise ValueError(f"Unsupported history_mode: {history_mode}. Expected 'all', 'post_spike', or 'half'.")
+        self.layer_index = int(layer_index) if layer_index is not None else None
+        self.total_layers = int(total_layers) if total_layers is not None else None
+        if self.history_mode == 'half':
+            if self.layer_index is None or self.total_layers is None:
+                self.history_mode = 'all'
+            else:
+                self.history_mode = 'post_spike' if self.layer_index < (self.total_layers // 2) else 'all'
+        self.history_weight_lo = float(history_weight_lo)
+        self.history_weight_hi = float(history_weight_hi)
+        if self.history_weight_hi <= self.history_weight_lo:
+            raise ValueError('history_weight_hi must be larger than history_weight_lo.')
+        self.history_power_lo = 0.0
+        self.history_power_hi = 1.0
         self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
 
         def _inv_sigmoid(x: float) -> float:
@@ -168,11 +189,25 @@ class LSLIFNeuron(nn.Module):
             return float(torch.log(x_t / (1.0 - x_t)).item())
 
         if self.history_learn_weight:
-            init_weight = float(np.clip(self.history_weight, self.history_weight_lo, self.history_weight_hi))
-            scale = self.history_weight_hi - self.history_weight_lo
-            init_unit = (init_weight - self.history_weight_lo) / max(scale, 1e-6)
+            if self.history_weight_per_step:
+                init_weight = float(np.clip(self.history_weight, self.history_weight_lo, self.history_weight_hi))
+                scale = self.history_weight_hi - self.history_weight_lo
+                init_unit = (init_weight - self.history_weight_lo) / max(scale, 1e-6)
+                init_raw = _inv_sigmoid(init_unit)
+                init_tensor = torch.full((self.history_max_steps,), init_raw, dtype=torch.float32)
+                self.history_weight_raw = nn.Parameter(init_tensor)
+            else:
+                init_weight = float(np.clip(self.history_weight, self.history_weight_lo, self.history_weight_hi))
+                scale = self.history_weight_hi - self.history_weight_lo
+                init_unit = (init_weight - self.history_weight_lo) / max(scale, 1e-6)
+                init_raw = _inv_sigmoid(init_unit)
+                self.history_weight_raw = nn.Parameter(torch.tensor(init_raw, dtype=torch.float32))
+        if self.history_learn_power:
+            init_power = float(np.clip(self.history_power, self.history_power_lo, self.history_power_hi))
+            scale = self.history_power_hi - self.history_power_lo
+            init_unit = (init_power - self.history_power_lo) / max(scale, 1e-6)
             init_raw = _inv_sigmoid(init_unit)
-            self.history_weight_raw = nn.Parameter(torch.tensor(init_raw, dtype=torch.float32))
+            self.history_power_raw = nn.Parameter(torch.tensor(init_raw, dtype=torch.float32))
 
         self.v = None
         self.n = None
@@ -198,12 +233,24 @@ class LSLIFNeuron(nn.Module):
             self.step_count = 0
 
 
-    def _get_history_weight(self, dtype: torch.dtype, device: torch.device):
+    def _get_history_weight(self, dtype: torch.dtype, device: torch.device, step_count: Optional[int] = None):
         if self.history_learn_weight:
-            weight_unit = torch.sigmoid(self.history_weight_raw)
+            if self.history_weight_per_step:
+                idx = 0 if step_count is None else max(0, min(int(step_count) - 1, self.history_max_steps - 1))
+                weight_raw = self.history_weight_raw[idx]
+            else:
+                weight_raw = self.history_weight_raw
+            weight_unit = torch.sigmoid(weight_raw)
             weight = self.history_weight_lo + (self.history_weight_hi - self.history_weight_lo) * weight_unit
             return weight.to(dtype=dtype, device=device)
         return torch.as_tensor(self.history_weight, dtype=dtype, device=device)
+
+    def _get_history_power(self, dtype: torch.dtype, device: torch.device):
+        if self.history_learn_power:
+            power_unit = torch.sigmoid(self.history_power_raw)
+            power = self.history_power_lo + (self.history_power_hi - self.history_power_lo) * power_unit
+            return power.to(dtype=dtype, device=device)
+        return torch.as_tensor(self.history_power, dtype=dtype, device=device)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         self._ensure_state(x)
@@ -221,8 +268,9 @@ class LSLIFNeuron(nn.Module):
 
         self.step_count += 1
         step_t = torch.as_tensor(float(self.step_count), device=m_t.device, dtype=m_t.dtype)
-        norm = torch.pow(step_t + self.history_eps, self.history_power)
-        history_weight = self._get_history_weight(dtype=m_t.dtype, device=m_t.device)
+        history_power = self._get_history_power(dtype=m_t.dtype, device=m_t.device)
+        norm = torch.pow(step_t + self.history_eps, history_power)
+        history_weight = self._get_history_weight(dtype=m_t.dtype, device=m_t.device, step_count=self.step_count)
         history_term = history_weight * (n_t / norm)
         if self.history_mode == 'post_spike':
             history_term = history_term * self.has_fired.to(dtype=history_term.dtype)

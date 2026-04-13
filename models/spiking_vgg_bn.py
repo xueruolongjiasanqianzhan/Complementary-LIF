@@ -43,6 +43,9 @@ class SpikingVGGBN(nn.Module):
         super(SpikingVGGBN, self).__init__()
         self.whether_bias = True
         self.init_channels = kwargs.get('c_in', 2)
+        self.history_mode = kwargs.get('history_mode', 'all')
+        self.total_neuron_layers = sum(1 for stage in cfg[vgg_name] for v in stage if v != 'M')
+        self.layer_index = 0
 
         self.layer1 = self._make_layers(cfg[vgg_name][0], dropout, neuron, **kwargs)
         self.layer2 = self._make_layers(cfg[vgg_name][1], dropout, neuron, **kwargs)
@@ -75,12 +78,16 @@ class SpikingVGGBN(nn.Module):
             if x == 'M':
                 layers.append(nn.AvgPool2d(kernel_size=2, stride=2))
             else:
+                neuron_kwargs = dict(kwargs)
+                if self.history_mode == 'half':
+                    neuron_kwargs['layer_index'] = self.layer_index
+                    neuron_kwargs['total_layers'] = self.total_neuron_layers
                 layers.append(nn.Conv2d(self.init_channels, x, kernel_size=3, padding=1, bias=self.whether_bias))
                 layers.append(nn.BatchNorm2d(x))
-                # kwargs["l_i"] += 1
-                layers.append(neuron(**kwargs))
+                layers.append(neuron(**neuron_kwargs))
                 layers.append(layer.Dropout(dropout))
                 self.init_channels = x
+                self.layer_index += 1
         return nn.Sequential(*layers)
 
     def forward(self, x):

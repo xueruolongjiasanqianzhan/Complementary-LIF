@@ -5,6 +5,18 @@ __all__ = [
     'PreActResNet', 'spiking_resnet18', 'spiking_resnet34', 'spiking_resnet50', 'spiking_resnet101', 'spiking_resnet152'
 ]
 
+def _build_neuron(neuron: callable, kwargs: dict):
+    neuron_kwargs = dict(kwargs)
+    counter = neuron_kwargs.get('_layer_counter')
+    if neuron_kwargs.get('history_mode', 'all') == 'half' and isinstance(counter, dict):
+        idx = int(counter.get('i', 0))
+        total = int(max(1, counter.get('total', 1)))
+        neuron_kwargs['layer_index'] = idx
+        neuron_kwargs['total_layers'] = total
+        counter['i'] = idx + 1
+    neuron_kwargs.pop('_layer_counter', None)
+    return neuron(**neuron_kwargs)
+
 
 class PreActBlock(nn.Module):
     '''Pre-activation version of the BasicBlock.'''
@@ -28,8 +40,8 @@ class PreActBlock(nn.Module):
         else:
             self.shortcut = nn.Sequential()
 
-        self.relu1 = neuron(**kwargs)
-        self.relu2 = neuron(**kwargs)
+        self.relu1 = _build_neuron(neuron, kwargs)
+        self.relu2 = _build_neuron(neuron, kwargs)
 
     def forward(self, x):
         x = self.relu1(self.bn1(x))
@@ -64,9 +76,9 @@ class PreActBottleneck(nn.Module):
         else:
             self.shortcut = nn.Sequential()
 
-        self.relu1 = neuron(**kwargs)
-        self.relu2 = neuron(**kwargs)
-        self.relu3 = neuron(**kwargs)
+        self.relu1 = _build_neuron(neuron, kwargs)
+        self.relu2 = _build_neuron(neuron, kwargs)
+        self.relu3 = _build_neuron(neuron, kwargs)
 
     def forward(self, x):
         x = self.relu1(self.bn1(x))
@@ -86,6 +98,11 @@ class PreActResNet(nn.Module):
         super(PreActResNet, self).__init__()
         self.num_blocks = num_blocks
 
+        neurons_per_block = 2 if block is PreActBlock else 3
+        total_neuron_layers = sum(num_blocks) * neurons_per_block + 1
+        kwargs = dict(kwargs)
+        kwargs['_layer_counter'] = {'i': 0, 'total': total_neuron_layers}
+
         self.data_channels = kwargs.get('c_in', 3)
         self.init_channels = 64
         self.conv1 = nn.Conv2d(self.data_channels, 64, kernel_size=3, stride=1, padding=1, bias=False)
@@ -100,7 +117,7 @@ class PreActResNet(nn.Module):
         self.drop = layer.Dropout(dropout)
         self.linear = nn.Linear(512 * block.expansion, num_classes)
 
-        self.relu1 = neuron(**kwargs)
+        self.relu1 = _build_neuron(neuron, kwargs)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
