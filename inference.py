@@ -74,7 +74,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), LSLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), LSLIF, CLIF, PLIF, relu')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
@@ -94,6 +94,16 @@ def main():
     parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF only: epsilon for history normalization')
     parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF only: make history_weight learnable')
     parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike'], help='for LSLIF only: when to add history branch (all steps or only after neuron has fired)')
+    parser.add_argument('-dtlif_dt', type=float, default=1.0, help='for DTLIF only: time-step size used in rho update')
+    parser.add_argument('-dtlif_a', type=float, default=0.1, help='for DTLIF only: retention boost coefficient when no spike')
+    parser.add_argument('-dtlif_b', type=float, default=0.1, help='for DTLIF only: leakage boost coefficient when spike')
+    parser.add_argument('-dtlif_eta', type=float, default=0.5, help='for DTLIF only: smoothing factor for lambda update')
+    parser.add_argument('-dtlif_learn_a', action='store_true', help='for DTLIF only: make a learnable')
+    parser.add_argument('-dtlif_learn_b', action='store_true', help='for DTLIF only: make b learnable')
+    parser.add_argument('-dtlif_learn_eta', action='store_true', help='for DTLIF only: make eta learnable')
+    parser.add_argument('-dtlif_detach_spike', type=bool, default=True, help='for DTLIF only: whether to detach previous spike in rho update')
+    parser.add_argument('-dtlif_lambda_lo', type=float, default=0.01, help='for DTLIF only: lower bound for lambda state')
+    parser.add_argument('-dtlif_lambda_hi', type=float, default=5.0, help='for DTLIF only: upper bound for lambda state')
 
     args = parser.parse_args()
     print(args)
@@ -302,6 +312,8 @@ def main():
         neuron_model = neuron.BPTTNeuronTauDependent
     elif args.neuron_model == 'newCLIF':
         neuron_model = neuron.NewCLIFNeuron
+    elif args.neuron_model == 'DTLIF':
+        neuron_model = neuron.DTLIFNeuron
     elif args.neuron_model == 'LSLIF':
         neuron_model = neuron.LSLIFNeuron
     elif args.neuron_model == 'CLIF':
@@ -328,6 +340,16 @@ def main():
         tau_learn_alpha=args.tau_learn_alpha,
         tau_alpha_share=args.tau_alpha_share,
         tau_learn_eta=getattr(args, 'tau_learn_eta', False),
+        dtlif_dt=args.dtlif_dt,
+        dtlif_a=args.dtlif_a,
+        dtlif_b=args.dtlif_b,
+        dtlif_eta=args.dtlif_eta,
+        dtlif_learn_a=args.dtlif_learn_a,
+        dtlif_learn_b=args.dtlif_learn_b,
+        dtlif_learn_eta=args.dtlif_learn_eta,
+        dtlif_detach_spike=args.dtlif_detach_spike,
+        dtlif_lambda_lo=args.dtlif_lambda_lo,
+        dtlif_lambda_hi=args.dtlif_lambda_hi,
         history_weight=args.history_weight,
         history_power=args.history_power,
         history_eps=args.history_eps,
