@@ -112,6 +112,130 @@ class ReLU(nn.Module):
         return torch.relu(x)
 
 
+class _SurrogateHeaviside(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, alpha: float):
+        ctx.save_for_backward(x)
+        ctx.alpha = float(alpha)
+        return (x >= 0).to(x.dtype)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        (x,) = ctx.saved_tensors
+        alpha = ctx.alpha
+        s = torch.sigmoid(alpha * x)
+        grad = alpha * s * (1.0 - s)
+        return grad_output * grad, None
+
+
+class DGNNeuron(nn.Module):
+    """
+    DGN-style neuron adapted to this project's layer-wise neuron interface.
+
+    Dynamics:
+      D_t   = exp(-dt/tau_s) * D_{t-1} + x_t
+      rho_t = phi(1 - gl*dt - dt * C * D_t)
+      V_t   = rho_t * V_{t-1} + dt * W * D_t - v_th * z_{t-1}
+      z_t   = Theta(V_t - v_th)      (with surrogate gradient in backward)
+    """
+
+    def __init__(
+        self,
+        tau: float = 2.0,
+        tau_s: Optional[float] = None,
+        gl: float = 0.1,
+        dgn_dt: float = 1.0,
+        dgn_phi: str = 'sigmoid',
+        dgn_surrogate_alpha: float = 4.0,
+        dgn_learnable_gl: bool = False,
+        dgn_w_init: float = 1.0,
+        dgn_c_init: float = 1.0,
+        dgn_learnable_w: bool = False,
+        dgn_learnable_c: bool = False,
+        v_threshold: float = 1.0,
+        detach_reset: bool = False,
+        tau_eps: float = 1e-6,
+        **kwargs,
+    ):
+        super().__init__()
+        self.tau_s = float(tau if tau_s is None else tau_s)
+        if self.tau_s <= 0:
+            raise ValueError('tau_s must be positive.')
+        self.dgn_dt = float(dgn_dt)
+        if self.dgn_dt <= 0:
+            raise ValueError('dgn_dt must be positive.')
+        self.dgn_phi = str(dgn_phi).lower()
+        self.dgn_surrogate_alpha = float(dgn_surrogate_alpha)
+        self.v_threshold = float(v_threshold)
+        self.detach_reset = bool(detach_reset)
+        self.tau_eps = float(tau_eps)
+
+        gl_t = torch.tensor(float(gl), dtype=torch.float32)
+        if dgn_learnable_gl:
+            self.gl = nn.Parameter(gl_t)
+        else:
+            self.register_buffer('gl', gl_t)
+
+        w_t = torch.tensor(float(dgn_w_init), dtype=torch.float32)
+        c_t = torch.tensor(float(dgn_c_init), dtype=torch.float32)
+        if dgn_learnable_w:
+            self.W = nn.Parameter(w_t)
+        else:
+            self.register_buffer('W', w_t)
+        if dgn_learnable_c:
+            self.C = nn.Parameter(c_t)
+        else:
+            self.register_buffer('C', c_t)
+
+        self.D = None
+        self.V = None
+        self.z_prev = None
+
+    def reset(self):
+        self.D = None
+        self.V = None
+        self.z_prev = None
+
+    def _ensure_state(self, x: torch.Tensor):
+        need_init = (
+            self.D is None
+            or self.D.shape != x.shape
+            or self.D.device != x.device
+        )
+        if need_init:
+            self.D = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.V = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.z_prev = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+
+    def _phi(self, x: torch.Tensor) -> torch.Tensor:
+        if self.dgn_phi == 'sigmoid':
+            return torch.sigmoid(x)
+        if self.dgn_phi == 'hard_sigmoid':
+            return torch.clamp((x + 1.0) / 2.0, 0.0, 1.0)
+        if self.dgn_phi == 'identity':
+            return x
+        raise ValueError(f'Unsupported dgn_phi: {self.dgn_phi}')
+
+    def forward(self, x: torch.Tensor):
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+
+        decay = float(np.exp(-self.dgn_dt / max(self.tau_s, self.tau_eps)))
+        D_t = self.D * decay + x_f
+
+        rho_raw = 1.0 - self.gl * self.dgn_dt - self.dgn_dt * self.C * D_t
+        rho_t = self._phi(rho_raw)
+        V_t = rho_t * self.V + self.dgn_dt * self.W * D_t - self.v_threshold * self.z_prev
+
+        z_t = _SurrogateHeaviside.apply(V_t - self.v_threshold, self.dgn_surrogate_alpha)
+        rs = z_t.detach() if self.detach_reset else z_t
+
+        self.D = D_t
+        self.V = V_t
+        self.z_prev = rs
+        return z_t.to(dtype=x.dtype)
+
+
 
 
 class LSLIFNeuron(nn.Module):
