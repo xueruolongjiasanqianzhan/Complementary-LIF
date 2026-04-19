@@ -112,6 +112,116 @@ class ReLU(nn.Module):
         return torch.relu(x)
 
 
+class DGNNeuron(nn.Module):
+    """
+    DGN-style neuron adapted to this project's layer-wise neuron interface.
+
+    Dynamics:
+      D_t   = exp(-dt/tau_s) * D_{t-1} + x_t
+      rho_t = phi(1 - gl*dt - dt * C * D_t)
+      V_t   = rho_t * V_{t-1} + dt * W * D_t - v_th * z_{t-1}
+      z_t   = surrogate_function(V_t - v_th)
+    """
+
+    def __init__(
+        self,
+        tau: float = 2.0,
+        tau_s: Optional[float] = None,
+        gl: float = 0.1,
+        dgn_dt: float = 1.0,
+        dgn_phi: str = 'sigmoid',
+        dgn_learnable_gl: bool = False,
+        dgn_w_init: float = 0.1,
+        dgn_c_init: float = 0.1,
+        dgn_learnable_w: bool = False,
+        dgn_learnable_c: bool = False,
+        v_threshold: float = 1.0,
+        surrogate_function: Optional[Callable] = None,
+        detach_reset: bool = False,
+        tau_eps: float = 1e-6,
+        **kwargs,
+    ):
+        super().__init__()
+        self.tau_s = float(tau if tau_s is None else tau_s)
+        if self.tau_s <= 0:
+            raise ValueError('tau_s must be positive.')
+        self.dgn_dt = float(dgn_dt)
+        if self.dgn_dt <= 0:
+            raise ValueError('dgn_dt must be positive.')
+        self.dgn_phi = str(dgn_phi).lower()
+        self.v_threshold = float(v_threshold)
+        self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
+        self.detach_reset = bool(detach_reset)
+        self.tau_eps = float(tau_eps)
+        if dgn_w_init <= 0 or dgn_c_init <= 0:
+            raise ValueError('dgn_w_init and dgn_c_init should be positive (used as init std).')
+
+        gl_t = torch.tensor(float(gl), dtype=torch.float32)
+        if dgn_learnable_gl:
+            self.gl = nn.Parameter(gl_t)
+        else:
+            self.register_buffer('gl', gl_t)
+
+        w_t = torch.empty(1, dtype=torch.float32).normal_(mean=0.0, std=float(dgn_w_init)).squeeze(0)
+        c_t = torch.empty(1, dtype=torch.float32).normal_(mean=0.0, std=float(dgn_c_init)).squeeze(0)
+        if dgn_learnable_w:
+            self.W = nn.Parameter(w_t)
+        else:
+            self.register_buffer('W', w_t)
+        if dgn_learnable_c:
+            self.C = nn.Parameter(c_t)
+        else:
+            self.register_buffer('C', c_t)
+
+        self.D = None
+        self.V = None
+        self.z_prev = None
+
+    def reset(self):
+        self.D = None
+        self.V = None
+        self.z_prev = None
+
+    def _ensure_state(self, x: torch.Tensor):
+        need_init = (
+            self.D is None
+            or self.D.shape != x.shape
+            or self.D.device != x.device
+        )
+        if need_init:
+            self.D = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.V = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.z_prev = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+
+    def _phi(self, x: torch.Tensor) -> torch.Tensor:
+        if self.dgn_phi == 'sigmoid':
+            return torch.sigmoid(x)
+        if self.dgn_phi == 'hard_sigmoid':
+            return torch.clamp((x + 1.0) / 2.0, 0.0, 1.0)
+        if self.dgn_phi == 'identity':
+            return x
+        raise ValueError(f'Unsupported dgn_phi: {self.dgn_phi}')
+
+    def forward(self, x: torch.Tensor):
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+
+        decay = float(np.exp(-self.dgn_dt / max(self.tau_s, self.tau_eps)))
+        D_t = self.D * decay + x_f
+
+        rho_raw = 1.0 - self.gl * self.dgn_dt - self.dgn_dt * self.C * D_t
+        rho_t = self._phi(rho_raw)
+        V_t = rho_t * self.V + self.dgn_dt * self.W * D_t - self.v_threshold * self.z_prev
+
+        z_t = self.surrogate_function(V_t - self.v_threshold)
+        rs = z_t.detach() if self.detach_reset else z_t
+
+        self.D = D_t
+        self.V = V_t
+        self.z_prev = rs
+        return z_t.to(dtype=x.dtype)
+
+
 
 
 class LSLIFNeuron(nn.Module):
@@ -514,6 +624,134 @@ class BPTTNeuronTauDependent(BPTTNeuron):
             tau_next = tau_next.clamp(min=self.tau_lo, max=self.tau_hi)
             self.log_tau_state = torch.log(tau_next)
 
+        return spike.to(dtype=x.dtype)
+
+
+class DTLIFNeuron(nn.Module):
+    """
+    Dynamic-Tau-Like LIF with direct rho update (refractory-style).
+
+    Design target:
+      - if spike_{t-1} == 0: more retention (rho increases)
+      - if spike_{t-1} == 1: more leakage   (rho decreases)
+
+    We maintain a leakage-rate state ``lambda_state`` and map it to ``rho`` by:
+      rho_t = sigmoid(1 - dt * lambda_t)
+
+    Direct update:
+      lambda_t = lambda_{t-1} - a * (1 - prev_spike) + b * prev_spike
+    """
+
+    def __init__(
+        self,
+        tau: float = 2.0,
+        decay_input: bool = False,
+        v_threshold: float = 1.0,
+        v_reset: Optional[float] = None,
+        surrogate_function: Optional[Callable] = None,
+        detach_reset: bool = False,
+        tau_eps: float = 1e-6,
+        dtlif_dt: float = 1.0,
+        dtlif_a: float = 0.1,
+        dtlif_b: float = 0.1,
+        dtlif_learn_a: bool = False,
+        dtlif_learn_b: bool = False,
+        dtlif_detach_spike: bool = True,
+        dtlif_lambda_lo: float = 0.01,
+        dtlif_lambda_hi: float = 5.0,
+        **kwargs,
+    ):
+        super().__init__()
+        self.tau0 = float(tau)
+        self.decay_input = bool(decay_input)
+        self.v_threshold = float(v_threshold)
+        self.v_reset = v_reset
+        self.detach_reset = bool(detach_reset)
+        self.tau_eps = float(tau_eps)
+        self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
+
+        self.dtlif_dt = float(dtlif_dt)
+        self.dtlif_a = float(dtlif_a)
+        self.dtlif_b = float(dtlif_b)
+        self.dtlif_learn_a = bool(dtlif_learn_a)
+        self.dtlif_learn_b = bool(dtlif_learn_b)
+        self.dtlif_detach_spike = bool(dtlif_detach_spike)
+        self.dtlif_lambda_lo = float(dtlif_lambda_lo)
+        self.dtlif_lambda_hi = float(dtlif_lambda_hi)
+        if self.dtlif_lambda_hi <= self.dtlif_lambda_lo:
+            raise ValueError('dtlif_lambda_hi must be larger than dtlif_lambda_lo.')
+
+        def _inv_softplus(x: float) -> float:
+            x_t = torch.tensor(max(float(x), 1e-6), dtype=torch.float32)
+            return float(torch.log(torch.expm1(x_t)).item())
+
+        if self.dtlif_learn_a:
+            self.a_raw = nn.Parameter(torch.tensor(_inv_softplus(self.dtlif_a), dtype=torch.float32))
+        if self.dtlif_learn_b:
+            self.b_raw = nn.Parameter(torch.tensor(_inv_softplus(self.dtlif_b), dtype=torch.float32))
+
+        self.v = None
+        self.lambda_state = None
+        self.prev_spike = None
+
+    def reset(self):
+        self.v = None
+        self.lambda_state = None
+        self.prev_spike = None
+
+    def _ensure_state(self, x: torch.Tensor):
+        need_init = (
+            self.v is None
+            or self.v.shape != x.shape
+            or self.v.device != x.device
+        )
+        if need_init:
+            self.v = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            lambda0 = 1.0 / max(self.tau0 + self.tau_eps, self.tau_eps)
+            self.lambda_state = torch.full_like(self.v, float(lambda0))
+            self.prev_spike = torch.zeros_like(self.v, dtype=torch.float32, device=x.device)
+
+    def _get_a(self, dtype: torch.dtype, device: torch.device):
+        if self.dtlif_learn_a:
+            return F.softplus(self.a_raw).to(dtype=dtype, device=device)
+        return torch.as_tensor(self.dtlif_a, dtype=dtype, device=device)
+
+    def _get_b(self, dtype: torch.dtype, device: torch.device):
+        if self.dtlif_learn_b:
+            return F.softplus(self.b_raw).to(dtype=dtype, device=device)
+        return torch.as_tensor(self.dtlif_b, dtype=dtype, device=device)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+
+        a = self._get_a(dtype=self.v.dtype, device=self.v.device)
+        b = self._get_b(dtype=self.v.dtype, device=self.v.device)
+        dt_t = torch.as_tensor(self.dtlif_dt, dtype=self.v.dtype, device=self.v.device)
+        one = torch.ones_like(self.prev_spike, dtype=self.v.dtype, device=self.v.device)
+
+        self.lambda_state = self.lambda_state - a * (one - self.prev_spike) + b * self.prev_spike
+        self.lambda_state = self.lambda_state.clamp(min=self.dtlif_lambda_lo, max=self.dtlif_lambda_hi)
+
+        rho = torch.sigmoid(one - dt_t * self.lambda_state)
+
+        if self.decay_input:
+            self.v = self.v + (x_f - self.v) * (one - rho)
+        else:
+            self.v = self.v * rho + x_f
+
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+        spike = self.surrogate_function(self.v - th_f)
+
+        rs = spike.detach() if self.detach_reset else spike
+        if self.v_reset is None:
+            self.v = self.v - rs * th_f
+        else:
+            v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
+            self.v = torch.where(rs.bool(), v_reset_t, self.v)
+
+        prev_spike = rs.detach() if self.dtlif_detach_spike else rs
+        self.prev_spike = prev_spike.to(dtype=self.v.dtype)
         return spike.to(dtype=x.dtype)
 
 

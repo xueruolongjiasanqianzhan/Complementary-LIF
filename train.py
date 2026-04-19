@@ -77,7 +77,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), LSLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LSLIF, CLIF, PLIF, relu')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
@@ -101,6 +101,23 @@ def main():
     parser.add_argument('-history_weight_per_step', action='store_true', help='for LSLIF only: use one learnable history_weight per time-step')
     parser.add_argument('-history_learn_power', action='store_true', help='for LSLIF only: make history_power learnable')
     parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike', 'half'], help='for LSLIF only: history mode (all, post_spike, or half: shallow post_spike and deep all)')
+    parser.add_argument('-dtlif_dt', type=float, default=1.0, help='for DTLIF only: time-step size used in rho update')
+    parser.add_argument('-dtlif_a', type=float, default=0.1, help='for DTLIF only: retention boost coefficient when no spike')
+    parser.add_argument('-dtlif_b', type=float, default=0.1, help='for DTLIF only: leakage boost coefficient when spike')
+    parser.add_argument('-dtlif_learn_a', action='store_true', help='for DTLIF only: make a learnable')
+    parser.add_argument('-dtlif_learn_b', action='store_true', help='for DTLIF only: make b learnable')
+    parser.add_argument('-dtlif_detach_spike', type=bool, default=True, help='for DTLIF only: whether to detach previous spike in rho update')
+    parser.add_argument('-dtlif_lambda_lo', type=float, default=0.01, help='for DTLIF only: lower bound for lambda state')
+    parser.add_argument('-dtlif_lambda_hi', type=float, default=5.0, help='for DTLIF only: upper bound for lambda state')
+    parser.add_argument('-dgn_tau_s', type=float, default=2.0, help='for DGN only: synaptic trace time constant')
+    parser.add_argument('-dgn_gl', type=float, default=0.1, help='for DGN only: baseline leakage conductance')
+    parser.add_argument('-dgn_dt', type=float, default=1.0, help='for DGN only: time-step size')
+    parser.add_argument('-dgn_phi', type=str, default='sigmoid', choices=['sigmoid', 'hard_sigmoid', 'identity'], help='for DGN only: gating nonlinearity')
+    parser.add_argument('-dgn_learnable_gl', action='store_true', help='for DGN only: make gl learnable')
+    parser.add_argument('-dgn_w_init', type=float, default=0.1, help='for DGN only: W init std (normal mean=0)')
+    parser.add_argument('-dgn_c_init', type=float, default=0.1, help='for DGN only: C init std (normal mean=0)')
+    parser.add_argument('-dgn_learnable_w', action='store_true', help='for DGN only: make W learnable')
+    parser.add_argument('-dgn_learnable_c', action='store_true', help='for DGN only: make C learnable')
 
     args = parser.parse_args()
     print(args)
@@ -303,6 +320,10 @@ def main():
         neuron_model = neuron.BPTTNeuronTauDependent
     elif args.neuron_model == 'newCLIF':
         neuron_model = neuron.NewCLIFNeuron
+    elif args.neuron_model == 'DTLIF':
+        neuron_model = neuron.DTLIFNeuron
+    elif args.neuron_model == 'DGN':
+        neuron_model = neuron.DGNNeuron
     elif args.neuron_model == 'LSLIF':
         neuron_model = neuron.LSLIFNeuron
     elif args.neuron_model == 'CLIF':
@@ -329,6 +350,23 @@ def main():
         tau_learn_alpha=args.tau_learn_alpha,
         tau_alpha_share=args.tau_alpha_share,
         tau_learn_eta=args.tau_learn_eta,
+        dtlif_dt=args.dtlif_dt,
+        dtlif_a=args.dtlif_a,
+        dtlif_b=args.dtlif_b,
+        dtlif_learn_a=args.dtlif_learn_a,
+        dtlif_learn_b=args.dtlif_learn_b,
+        dtlif_detach_spike=args.dtlif_detach_spike,
+        dtlif_lambda_lo=args.dtlif_lambda_lo,
+        dtlif_lambda_hi=args.dtlif_lambda_hi,
+        tau_s=args.dgn_tau_s,
+        gl=args.dgn_gl,
+        dgn_dt=args.dgn_dt,
+        dgn_phi=args.dgn_phi,
+        dgn_learnable_gl=args.dgn_learnable_gl,
+        dgn_w_init=args.dgn_w_init,
+        dgn_c_init=args.dgn_c_init,
+        dgn_learnable_w=args.dgn_learnable_w,
+        dgn_learnable_c=args.dgn_learnable_c,
         history_weight=args.history_weight,
         history_power=args.history_power,
         history_eps=args.history_eps,
@@ -413,8 +451,6 @@ def main():
     # output setting
     ##########################################################
     run_time = datetime.datetime.now().strftime('%Y%m%d_%H%M')
-    alpha_can_learn = '是' if args.tau_learn_alpha else '否'
-    eta_can_learn = '是' if args.tau_learn_eta else '否'
     run_name_parts = [
         f'运行日期{run_time}',
         f'数据集{args.dataset}',
@@ -422,12 +458,43 @@ def main():
         f'神经元{args.neuron_model}',
         f'时间步数T{args.T}',
         f'轮数E{args.epochs}',
-        f'alpha上{args.tau_alpha_up}',
-        f'alpha下{args.tau_alpha_down}',
-        f'eta{args.tau_eta}',
-        f'alpha可学习{alpha_can_learn}',
-        f'eta可学习{eta_can_learn}',
     ]
+    if args.neuron_model in ['newLIF', 'newLIFTauDep', 'newCLIF']:
+        alpha_can_learn = '是' if args.tau_learn_alpha else '否'
+        eta_can_learn = '是' if args.tau_learn_eta else '否'
+        run_name_parts.extend([
+            f'alpha上{args.tau_alpha_up}',
+            f'alpha下{args.tau_alpha_down}',
+            f'eta{args.tau_eta}',
+            f'alpha可学习{alpha_can_learn}',
+            f'eta可学习{eta_can_learn}',
+        ])
+    elif args.neuron_model == 'DTLIF':
+        a_can_learn = '是' if args.dtlif_learn_a else '否'
+        b_can_learn = '是' if args.dtlif_learn_b else '否'
+        detach_spike = '是' if args.dtlif_detach_spike else '否'
+        run_name_parts.extend([
+            f'dt{args.dtlif_dt}',
+            f'a{args.dtlif_a}',
+            f'b{args.dtlif_b}',
+            f'a可学习{a_can_learn}',
+            f'b可学习{b_can_learn}',
+            f'spike分支detach{detach_spike}',
+            f'lambda下界{args.dtlif_lambda_lo}',
+            f'lambda上界{args.dtlif_lambda_hi}',
+        ])
+    elif args.neuron_model == 'DGN':
+        run_name_parts.extend([
+            f'tau_s{args.dgn_tau_s}',
+            f'gl{args.dgn_gl}',
+            f'dt{args.dgn_dt}',
+            f'phi{args.dgn_phi}',
+            f'gl可学习{"是" if args.dgn_learnable_gl else "否"}',
+            f'W初始std{args.dgn_w_init}',
+            f'C初始std{args.dgn_c_init}',
+            f'W可学习{"是" if args.dgn_learnable_w else "否"}',
+            f'C可学习{"是" if args.dgn_learnable_c else "否"}',
+        ])
     if args.neuron_model == 'LSLIF':
         history_weight_can_learn = '是' if args.history_learn_weight else '否'
         history_weight_per_step = '是' if args.history_weight_per_step else '否'
