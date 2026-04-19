@@ -112,22 +112,6 @@ class ReLU(nn.Module):
         return torch.relu(x)
 
 
-class _SurrogateHeaviside(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x: torch.Tensor, alpha: float):
-        ctx.save_for_backward(x)
-        ctx.alpha = float(alpha)
-        return (x >= 0).to(x.dtype)
-
-    @staticmethod
-    def backward(ctx, grad_output: torch.Tensor):
-        (x,) = ctx.saved_tensors
-        alpha = ctx.alpha
-        s = torch.sigmoid(alpha * x)
-        grad = alpha * s * (1.0 - s)
-        return grad_output * grad, None
-
-
 class DGNNeuron(nn.Module):
     """
     DGN-style neuron adapted to this project's layer-wise neuron interface.
@@ -136,7 +120,7 @@ class DGNNeuron(nn.Module):
       D_t   = exp(-dt/tau_s) * D_{t-1} + x_t
       rho_t = phi(1 - gl*dt - dt * C * D_t)
       V_t   = rho_t * V_{t-1} + dt * W * D_t - v_th * z_{t-1}
-      z_t   = Theta(V_t - v_th)      (with surrogate gradient in backward)
+      z_t   = surrogate_function(V_t - v_th)
     """
 
     def __init__(
@@ -146,13 +130,13 @@ class DGNNeuron(nn.Module):
         gl: float = 0.1,
         dgn_dt: float = 1.0,
         dgn_phi: str = 'sigmoid',
-        dgn_surrogate_alpha: float = 4.0,
         dgn_learnable_gl: bool = False,
-        dgn_w_init: float = 1.0,
-        dgn_c_init: float = 1.0,
+        dgn_w_init: float = 0.1,
+        dgn_c_init: float = 0.1,
         dgn_learnable_w: bool = False,
         dgn_learnable_c: bool = False,
         v_threshold: float = 1.0,
+        surrogate_function: Optional[Callable] = None,
         detach_reset: bool = False,
         tau_eps: float = 1e-6,
         **kwargs,
@@ -165,10 +149,12 @@ class DGNNeuron(nn.Module):
         if self.dgn_dt <= 0:
             raise ValueError('dgn_dt must be positive.')
         self.dgn_phi = str(dgn_phi).lower()
-        self.dgn_surrogate_alpha = float(dgn_surrogate_alpha)
         self.v_threshold = float(v_threshold)
+        self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
         self.detach_reset = bool(detach_reset)
         self.tau_eps = float(tau_eps)
+        if dgn_w_init <= 0 or dgn_c_init <= 0:
+            raise ValueError('dgn_w_init and dgn_c_init should be positive (used as init std).')
 
         gl_t = torch.tensor(float(gl), dtype=torch.float32)
         if dgn_learnable_gl:
@@ -176,8 +162,8 @@ class DGNNeuron(nn.Module):
         else:
             self.register_buffer('gl', gl_t)
 
-        w_t = torch.tensor(float(dgn_w_init), dtype=torch.float32)
-        c_t = torch.tensor(float(dgn_c_init), dtype=torch.float32)
+        w_t = torch.empty(1, dtype=torch.float32).normal_(mean=0.0, std=float(dgn_w_init)).squeeze(0)
+        c_t = torch.empty(1, dtype=torch.float32).normal_(mean=0.0, std=float(dgn_c_init)).squeeze(0)
         if dgn_learnable_w:
             self.W = nn.Parameter(w_t)
         else:
@@ -227,7 +213,7 @@ class DGNNeuron(nn.Module):
         rho_t = self._phi(rho_raw)
         V_t = rho_t * self.V + self.dgn_dt * self.W * D_t - self.v_threshold * self.z_prev
 
-        z_t = _SurrogateHeaviside.apply(V_t - self.v_threshold, self.dgn_surrogate_alpha)
+        z_t = self.surrogate_function(V_t - self.v_threshold)
         rs = z_t.detach() if self.detach_reset else z_t
 
         self.D = D_t

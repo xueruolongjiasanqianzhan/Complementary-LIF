@@ -106,10 +106,9 @@ def main():
     parser.add_argument('-dgn_gl', type=float, default=0.1, help='for DGN only: baseline leakage conductance')
     parser.add_argument('-dgn_dt', type=float, default=1.0, help='for DGN only: time-step size')
     parser.add_argument('-dgn_phi', type=str, default='sigmoid', choices=['sigmoid', 'hard_sigmoid', 'identity'], help='for DGN only: gating nonlinearity')
-    parser.add_argument('-dgn_surrogate_alpha', type=float, default=4.0, help='for DGN only: surrogate alpha for Heaviside backward')
     parser.add_argument('-dgn_learnable_gl', action='store_true', help='for DGN only: make gl learnable')
-    parser.add_argument('-dgn_w_init', type=float, default=1.0, help='for DGN only: initial W')
-    parser.add_argument('-dgn_c_init', type=float, default=1.0, help='for DGN only: initial C')
+    parser.add_argument('-dgn_w_init', type=float, default=0.1, help='for DGN only: W init std (normal mean=0)')
+    parser.add_argument('-dgn_c_init', type=float, default=0.1, help='for DGN only: C init std (normal mean=0)')
     parser.add_argument('-dgn_learnable_w', action='store_true', help='for DGN only: make W learnable')
     parser.add_argument('-dgn_learnable_c', action='store_true', help='for DGN only: make C learnable')
 
@@ -362,7 +361,6 @@ def main():
         gl=args.dgn_gl,
         dgn_dt=args.dgn_dt,
         dgn_phi=args.dgn_phi,
-        dgn_surrogate_alpha=args.dgn_surrogate_alpha,
         dgn_learnable_gl=args.dgn_learnable_gl,
         dgn_w_init=args.dgn_w_init,
         dgn_c_init=args.dgn_c_init,
@@ -463,7 +461,7 @@ def main():
     elif args.neuron_model == 'DGN':
         out_dir += (
             f'_tauS{args.dgn_tau_s}_gl{args.dgn_gl}_dt{args.dgn_dt}_phi{args.dgn_phi}'
-            f'_sa{args.dgn_surrogate_alpha}_lgl{int(args.dgn_learnable_gl)}'
+            f'_lgl{int(args.dgn_learnable_gl)}'
             f'_w{args.dgn_w_init}_c{args.dgn_c_init}_lw{int(args.dgn_learnable_w)}_lc{int(args.dgn_learnable_c)}'
         )
 

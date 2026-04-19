@@ -113,10 +113,9 @@ def main():
     parser.add_argument('-dgn_gl', type=float, default=0.1, help='for DGN only: baseline leakage conductance')
     parser.add_argument('-dgn_dt', type=float, default=1.0, help='for DGN only: time-step size')
     parser.add_argument('-dgn_phi', type=str, default='sigmoid', choices=['sigmoid', 'hard_sigmoid', 'identity'], help='for DGN only: gating nonlinearity')
-    parser.add_argument('-dgn_surrogate_alpha', type=float, default=4.0, help='for DGN only: surrogate alpha for Heaviside backward')
     parser.add_argument('-dgn_learnable_gl', action='store_true', help='for DGN only: make gl learnable')
-    parser.add_argument('-dgn_w_init', type=float, default=1.0, help='for DGN only: initial W')
-    parser.add_argument('-dgn_c_init', type=float, default=1.0, help='for DGN only: initial C')
+    parser.add_argument('-dgn_w_init', type=float, default=0.1, help='for DGN only: W init std (normal mean=0)')
+    parser.add_argument('-dgn_c_init', type=float, default=0.1, help='for DGN only: C init std (normal mean=0)')
     parser.add_argument('-dgn_learnable_w', action='store_true', help='for DGN only: make W learnable')
     parser.add_argument('-dgn_learnable_c', action='store_true', help='for DGN only: make C learnable')
 
@@ -363,7 +362,6 @@ def main():
         gl=args.dgn_gl,
         dgn_dt=args.dgn_dt,
         dgn_phi=args.dgn_phi,
-        dgn_surrogate_alpha=args.dgn_surrogate_alpha,
         dgn_learnable_gl=args.dgn_learnable_gl,
         dgn_w_init=args.dgn_w_init,
         dgn_c_init=args.dgn_c_init,
@@ -491,10 +489,9 @@ def main():
             f'gl{args.dgn_gl}',
             f'dt{args.dgn_dt}',
             f'phi{args.dgn_phi}',
-            f'surrogateAlpha{args.dgn_surrogate_alpha}',
             f'gl可学习{"是" if args.dgn_learnable_gl else "否"}',
-            f'W初值{args.dgn_w_init}',
-            f'C初值{args.dgn_c_init}',
+            f'W初始std{args.dgn_w_init}',
+            f'C初始std{args.dgn_c_init}',
             f'W可学习{"是" if args.dgn_learnable_w else "否"}',
             f'C可学习{"是" if args.dgn_learnable_c else "否"}',
         ])
