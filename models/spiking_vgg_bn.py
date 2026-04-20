@@ -1,5 +1,6 @@
 import torch.nn as nn
 from spikingjelly.clock_driven import layer
+from modules import neuron as neuron_mod
 
 __all__ = [
     'SpikingVGGBN', 'spiking_vgg11_bn', 'spiking_vgg13_bn', 'spiking_vgg16_bn', 'spiking_vgg19_bn'
@@ -43,6 +44,7 @@ class SpikingVGGBN(nn.Module):
         super(SpikingVGGBN, self).__init__()
         self.whether_bias = True
         self.init_channels = kwargs.get('c_in', 2)
+        self.dgn_mode = kwargs.get('neuron_model_name', '').upper() == 'DGN' or neuron is neuron_mod.DGNNeuron
         self.history_mode = kwargs.get('history_mode', 'all')
         self.total_neuron_layers = sum(1 for stage in cfg[vgg_name] for v in stage if v != 'M')
         self.layer_index = 0
@@ -55,10 +57,16 @@ class SpikingVGGBN(nn.Module):
 
         self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
 
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(512 * 7 * 7, num_classes),
-        )
+        if self.dgn_mode:
+            self.classifier = nn.Sequential(
+                nn.Flatten(),
+                neuron_mod.DGNLinear(512 * 7 * 7, num_classes, **kwargs),
+            )
+        else:
+            self.classifier = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(512 * 7 * 7, num_classes),
+            )
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -82,9 +90,12 @@ class SpikingVGGBN(nn.Module):
                 if self.history_mode == 'half':
                     neuron_kwargs['layer_index'] = self.layer_index
                     neuron_kwargs['total_layers'] = self.total_neuron_layers
-                layers.append(nn.Conv2d(self.init_channels, x, kernel_size=3, padding=1, bias=self.whether_bias))
-                layers.append(nn.BatchNorm2d(x))
-                layers.append(neuron(**neuron_kwargs))
+                if self.dgn_mode:
+                    layers.append(neuron_mod.DGNConv2d(self.init_channels, x, kernel_size=3, padding=1, bias=self.whether_bias, **neuron_kwargs))
+                else:
+                    layers.append(nn.Conv2d(self.init_channels, x, kernel_size=3, padding=1, bias=self.whether_bias))
+                    layers.append(nn.BatchNorm2d(x))
+                    layers.append(neuron(**neuron_kwargs))
                 layers.append(layer.Dropout(dropout))
                 self.init_channels = x
                 self.layer_index += 1

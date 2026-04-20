@@ -1,5 +1,6 @@
 import torch.nn as nn
 from spikingjelly.clock_driven import layer
+from modules import neuron as neuron_mod
 
 __all__ = [
     'PreActResNet', 'spiking_resnet18', 'spiking_resnet34', 'spiking_resnet50', 'spiking_resnet101', 'spiking_resnet152'
@@ -25,23 +26,22 @@ class PreActBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride, dropout, neuron: callable = None, **kwargs):
         super(PreActBlock, self).__init__()
         whether_bias = True
-        self.bn1 = nn.BatchNorm2d(in_channels)
+        self.dgn_mode = kwargs.get('neuron_model_name', '').upper() == 'DGN' or neuron is neuron_mod.DGNNeuron
+        self.bn1 = nn.Identity() if self.dgn_mode else nn.BatchNorm2d(in_channels)
 
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=whether_bias)
-        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.conv1 = neuron_mod.DGNConv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=whether_bias, **kwargs) if self.dgn_mode else nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=whether_bias)
+        self.bn2 = nn.Identity() if self.dgn_mode else nn.BatchNorm2d(out_channels)
 
         self.dropout = layer.Dropout(dropout)
-        self.conv2 = nn.Conv2d(out_channels, self.expansion * out_channels, kernel_size=3, stride=1, padding=1,
-                               bias=whether_bias)
+        self.conv2 = neuron_mod.DGNConv2d(out_channels, self.expansion * out_channels, kernel_size=3, stride=1, padding=1, bias=whether_bias, **kwargs) if self.dgn_mode else nn.Conv2d(out_channels, self.expansion * out_channels, kernel_size=3, stride=1, padding=1, bias=whether_bias)
 
         if stride != 1 or in_channels != self.expansion * out_channels:
-            self.shortcut = nn.Conv2d(in_channels, self.expansion * out_channels, kernel_size=1, stride=stride,
-                                      padding=0, bias=whether_bias)
+            self.shortcut = neuron_mod.DGNConv2d(in_channels, self.expansion * out_channels, kernel_size=1, stride=stride, padding=0, bias=whether_bias, **kwargs) if self.dgn_mode else nn.Conv2d(in_channels, self.expansion * out_channels, kernel_size=1, stride=stride, padding=0, bias=whether_bias)
         else:
             self.shortcut = nn.Sequential()
 
-        self.relu1 = _build_neuron(neuron, kwargs)
-        self.relu2 = _build_neuron(neuron, kwargs)
+        self.relu1 = nn.Identity() if self.dgn_mode else _build_neuron(neuron, kwargs)
+        self.relu2 = nn.Identity() if self.dgn_mode else _build_neuron(neuron, kwargs)
 
     def forward(self, x):
         x = self.relu1(self.bn1(x))
@@ -58,27 +58,25 @@ class PreActBottleneck(nn.Module):
     def __init__(self, in_channels, out_channels, stride, dropout, neuron: callable = None, **kwargs):
         super(PreActBottleneck, self).__init__()
         whether_bias = True
+        self.dgn_mode = kwargs.get('neuron_model_name', '').upper() == 'DGN' or neuron is neuron_mod.DGNNeuron
+        self.bn1 = nn.Identity() if self.dgn_mode else nn.BatchNorm2d(in_channels)
 
-        self.bn1 = nn.BatchNorm2d(in_channels)
+        self.conv1 = neuron_mod.DGNConv2d(in_channels, out_channels, kernel_size=1, stride=stride, padding=0, bias=whether_bias, **kwargs) if self.dgn_mode else nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, padding=0, bias=whether_bias)
+        self.bn2 = nn.Identity() if self.dgn_mode else nn.BatchNorm2d(out_channels)
 
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, padding=0, bias=whether_bias)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=whether_bias)
-        self.bn3 = nn.BatchNorm2d(out_channels)
+        self.conv2 = neuron_mod.DGNConv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=whether_bias, **kwargs) if self.dgn_mode else nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=whether_bias)
+        self.bn3 = nn.Identity() if self.dgn_mode else nn.BatchNorm2d(out_channels)
         self.dropout = layer.Dropout(dropout)
-        self.conv3 = nn.Conv2d(out_channels, self.expansion * out_channels, kernel_size=1, stride=1, padding=0,
-                               bias=whether_bias)
+        self.conv3 = neuron_mod.DGNConv2d(out_channels, self.expansion * out_channels, kernel_size=1, stride=1, padding=0, bias=whether_bias, **kwargs) if self.dgn_mode else nn.Conv2d(out_channels, self.expansion * out_channels, kernel_size=1, stride=1, padding=0, bias=whether_bias)
 
         if stride != 1 or in_channels != self.expansion * out_channels:
-            self.shortcut = nn.Conv2d(in_channels, self.expansion * out_channels, kernel_size=1, stride=stride,
-                                      padding=0, bias=whether_bias)
+            self.shortcut = neuron_mod.DGNConv2d(in_channels, self.expansion * out_channels, kernel_size=1, stride=stride, padding=0, bias=whether_bias, **kwargs) if self.dgn_mode else nn.Conv2d(in_channels, self.expansion * out_channels, kernel_size=1, stride=stride, padding=0, bias=whether_bias)
         else:
             self.shortcut = nn.Sequential()
 
-        self.relu1 = _build_neuron(neuron, kwargs)
-        self.relu2 = _build_neuron(neuron, kwargs)
-        self.relu3 = _build_neuron(neuron, kwargs)
+        self.relu1 = nn.Identity() if self.dgn_mode else _build_neuron(neuron, kwargs)
+        self.relu2 = nn.Identity() if self.dgn_mode else _build_neuron(neuron, kwargs)
+        self.relu3 = nn.Identity() if self.dgn_mode else _build_neuron(neuron, kwargs)
 
     def forward(self, x):
         x = self.relu1(self.bn1(x))
@@ -105,19 +103,20 @@ class PreActResNet(nn.Module):
 
         self.data_channels = kwargs.get('c_in', 3)
         self.init_channels = 64
-        self.conv1 = nn.Conv2d(self.data_channels, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.dgn_mode = kwargs.get('neuron_model_name', '').upper() == 'DGN' or neuron is neuron_mod.DGNNeuron
+        self.conv1 = neuron_mod.DGNConv2d(self.data_channels, 64, kernel_size=3, stride=1, padding=1, bias=False, **kwargs) if self.dgn_mode else nn.Conv2d(self.data_channels, 64, kernel_size=3, stride=1, padding=1, bias=False)
         self.layer1 = self._make_layer(block, 64, num_blocks[0], 1, dropout, neuron, **kwargs)
         self.layer2 = self._make_layer(block, 128, num_blocks[1], 2, dropout, neuron, **kwargs)
         self.layer3 = self._make_layer(block, 256, num_blocks[2], 2, dropout, neuron, **kwargs)
         self.layer4 = self._make_layer(block, 512, num_blocks[3], 2, dropout, neuron, **kwargs)
 
-        self.bn1 = nn.BatchNorm2d(512 * block.expansion)
+        self.bn1 = nn.Identity() if self.dgn_mode else nn.BatchNorm2d(512 * block.expansion)
         self.pool = nn.AvgPool2d(4)
         self.flat = nn.Flatten()
         self.drop = layer.Dropout(dropout)
-        self.linear = nn.Linear(512 * block.expansion, num_classes)
+        self.linear = neuron_mod.DGNLinear(512 * block.expansion, num_classes, **kwargs) if self.dgn_mode else nn.Linear(512 * block.expansion, num_classes)
 
-        self.relu1 = _build_neuron(neuron, kwargs)
+        self.relu1 = nn.Identity() if self.dgn_mode else _build_neuron(neuron, kwargs)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):

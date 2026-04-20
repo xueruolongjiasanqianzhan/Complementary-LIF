@@ -1,5 +1,6 @@
 import torch
 from spikingjelly.clock_driven import layer
+from modules import neuron as neuron_mod
 
 __all__ = [
     'vggsnn', 'snn5', 'snn5_noAP'
@@ -40,7 +41,8 @@ class SNN5(nn.Module):
         )
         W = int(32 / 2 / 2 / 2 / 2 / 2)
 
-        self.classifier = nn.Linear(512 * W * W, num_classes)
+        dgn_mode = kwargs.get('neuron_model_name', '').upper() == 'DGN' or neuron is neuron_mod.DGNNeuron
+        self.classifier = neuron_mod.DGNLinear(512 * W * W, num_classes, **kwargs) if dgn_mode else nn.Linear(512 * W * W, num_classes)
         self.drop = layer.Dropout(dropout)
 
         for m in self.modules():
@@ -74,7 +76,8 @@ class SNN5_noAP(nn.Module):
         # if "fc_hw" in kwargs:
         #     W = int(kwargs["fc_hw"] / 2 / 2 / 2 / 2 / 2)
 
-        self.classifier = nn.Linear(256, num_classes)
+        dgn_mode = kwargs.get('neuron_model_name', '').upper() == 'DGN' or neuron is neuron_mod.DGNNeuron
+        self.classifier = neuron_mod.DGNLinear(256, num_classes, **kwargs) if dgn_mode else nn.Linear(256, num_classes)
         self.drop = layer.Dropout(dropout)
 
         for m in self.modules():
@@ -99,11 +102,16 @@ def snn5_noAP(neuron: callable = None, num_classes=10, neuron_dropout=0.0, **kwa
 class Layer(nn.Module):
     def __init__(self, in_plane, out_plane, kernel_size, stride, padding, neuron, **kwargs):
         super(Layer, self).__init__()
-        self.fwd = nn.Sequential(
-            nn.Conv2d(in_plane, out_plane, kernel_size, stride, padding),
-            nn.BatchNorm2d(out_plane)
-        )
-        self.act = _build_neuron(neuron, kwargs)
+        self.dgn_mode = kwargs.get('neuron_model_name', '').upper() == 'DGN' or neuron is neuron_mod.DGNNeuron
+        if self.dgn_mode:
+            self.fwd = neuron_mod.DGNConv2d(in_plane, out_plane, kernel_size, stride, padding, **kwargs)
+            self.act = nn.Identity()
+        else:
+            self.fwd = nn.Sequential(
+                nn.Conv2d(in_plane, out_plane, kernel_size, stride, padding),
+                nn.BatchNorm2d(out_plane)
+            )
+            self.act = _build_neuron(neuron, kwargs)
 
     def forward(self, x):
         x = self.fwd(x)
@@ -138,7 +146,8 @@ class VGGSNN(nn.Module):
             W = int(kwargs["fc_hw"] / 2 / 2 / 2 / 2)
         # self.T = 4
         # self.classifier = SeqToANNContainer(nn.Linear(512 * W * W, 10))
-        self.classifier = nn.Linear(512 * W * W, num_classes)
+        dgn_mode = kwargs.get('neuron_model_name', '').upper() == 'DGN' or neuron is neuron_mod.DGNNeuron
+        self.classifier = neuron_mod.DGNLinear(512 * W * W, num_classes, **kwargs) if dgn_mode else nn.Linear(512 * W * W, num_classes)
         self.drop = layer.Dropout(neuron_dropout)
 
         for m in self.modules():
@@ -174,7 +183,8 @@ class VGGSNNwoAP(nn.Module):
 
         # self.T = 4
         # self.classifier = SeqToANNContainer(nn.Linear(512 * W * W, 10))
-        self.classifier = nn.Linear(512 * W * W, num_classes)
+        dgn_mode = kwargs.get('neuron_model_name', '').upper() == 'DGN' or neuron is neuron_mod.DGNNeuron
+        self.classifier = neuron_mod.DGNLinear(512 * W * W, num_classes, **kwargs) if dgn_mode else nn.Linear(512 * W * W, num_classes)
         self.drop = layer.Dropout(neuron_dropout)
 
         for m in self.modules():
