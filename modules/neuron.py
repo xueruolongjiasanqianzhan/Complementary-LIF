@@ -636,6 +636,123 @@ class DTLIFNeuron(nn.Module):
         return spike.to(dtype=x.dtype)
 
 
+class DGNNeuron(nn.Module):
+    """
+    DGN-style neuron following Eq. (5)-(8) with one-step delayed soft reset.
+
+    Note:
+      In this codebase, neuron inputs are already aggregated post-synaptic currents
+      from previous layers. Therefore we keep a trace/state with the same shape as
+      the incoming tensor and use separate learnable scalars (C, W) for the
+      conductance path and current-injection path, respectively.
+    """
+
+    def __init__(
+        self,
+        tau: float = 2.0,
+        decay_input: bool = False,
+        v_threshold: float = 1.0,
+        v_reset: Optional[float] = None,
+        surrogate_function: Optional[Callable] = None,
+        detach_reset: bool = False,
+        tau_eps: float = 1e-6,
+        dgn_dt: float = 1.0,
+        dgn_gl: float = 0.0,
+        dgn_c_init: float = 0.01,
+        dgn_w_init: float = 0.01,
+        dgn_learn_c: bool = True,
+        dgn_learn_w: bool = True,
+        dgn_phi: str = 'sigmoid',
+        **kwargs,
+    ):
+        super().__init__()
+        self.tau_s = float(tau)
+        self.decay_input = bool(decay_input)
+        self.v_threshold = float(v_threshold)
+        self.v_reset = v_reset
+        self.detach_reset = bool(detach_reset)
+        self.tau_eps = float(tau_eps)
+        self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
+
+        self.dgn_dt = float(dgn_dt)
+        self.dgn_gl = float(dgn_gl)
+        self.dgn_phi = str(dgn_phi).lower().strip()
+        if self.dgn_phi not in {'sigmoid', 'hard_sigmoid', 'identity'}:
+            raise ValueError(f"Unsupported dgn_phi: {dgn_phi}. Expected 'sigmoid', 'hard_sigmoid', or 'identity'.")
+
+        c_init = torch.tensor(float(dgn_c_init), dtype=torch.float32)
+        w_init = torch.tensor(float(dgn_w_init), dtype=torch.float32)
+        if dgn_learn_c:
+            self.C = nn.Parameter(c_init)
+        else:
+            self.register_buffer('C', c_init)
+        if dgn_learn_w:
+            self.W = nn.Parameter(w_init)
+        else:
+            self.register_buffer('W', w_init)
+
+        self.v = None
+        self.syn_trace = None
+        self.prev_spike = None
+
+    def reset(self):
+        self.v = None
+        self.syn_trace = None
+        self.prev_spike = None
+
+    def _ensure_state(self, x: torch.Tensor):
+        need_init = (
+            self.v is None
+            or self.v.shape != x.shape
+            or self.v.device != x.device
+        )
+        if need_init:
+            self.v = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.syn_trace = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.prev_spike = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+
+    def _phi(self, x: torch.Tensor) -> torch.Tensor:
+        if self.dgn_phi == 'sigmoid':
+            return torch.sigmoid(x)
+        if self.dgn_phi == 'hard_sigmoid':
+            return torch.clamp((x + 1.0) * 0.5, 0.0, 1.0)
+        return x
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+
+        dt_t = torch.as_tensor(self.dgn_dt, dtype=self.v.dtype, device=self.v.device)
+        alpha = torch.exp(-dt_t / (self.tau_s + self.tau_eps))
+
+        # Eq. (5): synaptic trace update
+        self.syn_trace = alpha * self.syn_trace + x_f
+
+        c_t = self.C.to(dtype=self.v.dtype, device=self.v.device)
+        w_t = self.W.to(dtype=self.v.dtype, device=self.v.device)
+        one = torch.ones_like(self.v, dtype=self.v.dtype, device=self.v.device)
+
+        # Eq. (6): dynamic conductance gate rho_t
+        rho_in = one - self.dgn_gl * dt_t - dt_t * (c_t * self.syn_trace)
+        rho_t = self._phi(rho_in)
+
+        # Eq. (7): membrane update with one-step delayed soft reset
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+        self.v = rho_t * self.v + dt_t * (w_t * self.syn_trace) - th_f * self.prev_spike
+
+        # Eq. (8): spike generation
+        spike = self.surrogate_function(self.v - th_f)
+
+        rs = spike.detach() if self.detach_reset else spike
+        self.prev_spike = rs
+
+        if self.v_reset is not None:
+            v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
+            self.v = torch.where(rs.bool(), v_reset_t, self.v)
+
+        return spike.to(dtype=x.dtype)
+
+
 class NewCLIFNeuron(BPTTNeuronTauDependent):
     """
     CLIF + tau-dependent dynamic tau (newLIFTauDep-style).

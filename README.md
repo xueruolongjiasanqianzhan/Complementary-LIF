@@ -52,7 +52,7 @@ CIFAR-10, CIFAR-100, Tiny-Imagenet, DVS-CIFAR10, and DVS-Gesture:
 	# DVS-Gesture
     python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4  -neuron CLIF
 
-If you change the neuron, you can switch with ``-neuron_model`` among ``LIF`` (vanilla), ``newLIF`` (adaptive tau), ``CLIF``, and ``PLIF``.
+If you change the neuron, you can switch with ``-neuron_model`` among ``LIF`` (vanilla), ``newLIF`` (adaptive tau), ``newLIFTauDep``, ``newCLIF``, ``DTLIF``, ``DGN``, ``LSLIF``, ``CLIF``, ``PLIF``, and ``relu``.
 
 For example to setup LIF neuron for CIFAR-10 task:
 
@@ -92,4 +92,3 @@ Hope this repository is helpful for you:
   organization={PMLR}
 }
 ```
-
