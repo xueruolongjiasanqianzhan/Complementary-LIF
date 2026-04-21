@@ -789,6 +789,7 @@ class LIFDGNNeuron(nn.Module):
         lifdgn_temporal_gamma: float = 0.0,
         lifdgn_detach_prev: bool = False,
         lifdgn_temporal_mode: str = 'linear',
+        lifdgn_disable_temporal: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -805,6 +806,7 @@ class LIFDGNNeuron(nn.Module):
         self.lifdgn_g_max = float(max(lifdgn_g_max, 1e-6))
         self.lifdgn_nonlinear_input = bool(lifdgn_nonlinear_input)
         self.lifdgn_detach_prev = bool(lifdgn_detach_prev)
+        self.lifdgn_disable_temporal = bool(lifdgn_disable_temporal)
         self.lifdgn_temporal_mode = str(lifdgn_temporal_mode).lower()
         if self.lifdgn_temporal_mode not in {'linear', 'event'}:
             raise ValueError(
@@ -893,10 +895,12 @@ class LIFDGNNeuron(nn.Module):
             prev = prev.detach()
 
         y_spatial = self._outer_linear(x, x, self.weight, self.mask_spatial)
-        y_temporal = self._outer_linear(x, prev, self.weight_temporal, self.mask_temporal)
-        if self.lifdgn_temporal_mode == 'event':
-            y_temporal = torch.tanh(y_temporal)
-        y = x + y_spatial + self.temporal_gamma.to(dtype=x.dtype, device=x.device) * y_temporal
+        y = x + y_spatial
+        if not self.lifdgn_disable_temporal:
+            y_temporal = self._outer_linear(x, prev, self.weight_temporal, self.mask_temporal)
+            if self.lifdgn_temporal_mode == 'event':
+                y_temporal = torch.tanh(y_temporal)
+            y = y + self.temporal_gamma.to(dtype=x.dtype, device=x.device) * y_temporal
         self.prev_input = x
         return y
 

@@ -130,6 +130,7 @@ def main():
     parser.add_argument('-lifdgn_temporal_gamma', type=float, default=0.0, help='for LIFDGN only: scale of temporal bilinear input branch')
     parser.add_argument('-lifdgn_detach_prev', action='store_true', help='for LIFDGN only: detach previous input in temporal bilinear branch')
     parser.add_argument('-lifdgn_temporal_mode', type=str, default='linear', choices=['linear', 'event'], help='for LIFDGN only: temporal branch mode')
+    parser.add_argument('-lifdgn_disable_temporal', action='store_true', help='for LIFDGN only: skip temporal bilinear branch computation entirely')
     parser.set_defaults(dgn_learn_c=True, dgn_learn_w=True, lifdgn_learn_g0=True, lifdgn_learn_c=True)
 
     args = parser.parse_args()
@@ -390,6 +391,7 @@ def main():
         lifdgn_temporal_gamma=args.lifdgn_temporal_gamma,
         lifdgn_detach_prev=args.lifdgn_detach_prev,
         lifdgn_temporal_mode=args.lifdgn_temporal_mode,
+        lifdgn_disable_temporal=args.lifdgn_disable_temporal,
         history_weight=args.history_weight,
         history_power=args.history_power,
         history_eps=args.history_eps,
