@@ -77,7 +77,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), LSLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LSLIF, CLIF, PLIF, relu')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
@@ -108,6 +108,13 @@ def main():
     parser.add_argument('-dtlif_learn_b', action='store_true', help='for DTLIF only: make b learnable')
     parser.add_argument('-dtlif_lambda_lo', type=float, default=0.01, help='for DTLIF only: lower bound for lambda state')
     parser.add_argument('-dtlif_lambda_hi', type=float, default=5.0, help='for DTLIF only: upper bound for lambda state')
+    parser.add_argument('-dgn_dt', type=float, default=1.0, help='for DGN only: simulation step size Δt')
+    parser.add_argument('-dgn_gl', type=float, default=0.0, help='for DGN only: fixed leak conductance g_l')
+    parser.add_argument('-dgn_c_init', type=float, default=0.01, help='for DGN only: init value for conductance-path parameter C')
+    parser.add_argument('-dgn_w_init', type=float, default=0.01, help='for DGN only: init value for current-path parameter W')
+    parser.add_argument('-dgn_learn_c', type=bool, default=True, help='for DGN only: make C trainable')
+    parser.add_argument('-dgn_learn_w', type=bool, default=True, help='for DGN only: make W trainable')
+    parser.add_argument('-dgn_phi', type=str, default='sigmoid', choices=['sigmoid', 'hard_sigmoid', 'identity'], help='for DGN only: truncation function φ')
 
     args = parser.parse_args()
     print(args)
@@ -312,6 +319,8 @@ def main():
         neuron_model = neuron.NewCLIFNeuron
     elif args.neuron_model == 'DTLIF':
         neuron_model = neuron.DTLIFNeuron
+    elif args.neuron_model == 'DGN':
+        neuron_model = neuron.DGNNeuron
     elif args.neuron_model == 'LSLIF':
         neuron_model = neuron.LSLIFNeuron
     elif args.neuron_model == 'CLIF':
@@ -345,6 +354,13 @@ def main():
         dtlif_learn_b=args.dtlif_learn_b,
         dtlif_lambda_lo=args.dtlif_lambda_lo,
         dtlif_lambda_hi=args.dtlif_lambda_hi,
+        dgn_dt=args.dgn_dt,
+        dgn_gl=args.dgn_gl,
+        dgn_c_init=args.dgn_c_init,
+        dgn_w_init=args.dgn_w_init,
+        dgn_learn_c=args.dgn_learn_c,
+        dgn_learn_w=args.dgn_learn_w,
+        dgn_phi=args.dgn_phi,
         history_weight=args.history_weight,
         history_power=args.history_power,
         history_eps=args.history_eps,
@@ -369,7 +385,7 @@ def main():
                                                   c_in=c_in,
                                                   fc_hw=in_dim if in_dim else None, **neuron_kwargs)
         print('using Spiking VGG model.')
-    elif args.model in ['vggsnn', 'snn5_noAP']:  # snn5_noAP use for statistical experiment
+    elif args.model in ['vggsnn', 'snn5_noAP', 'dgn_dvscifar10_tiny']:  # lightweight option for DGN on DVS-CIFAR10
         net = vgg_model.__dict__[args.model](neuron=neuron_model, num_classes=num_classes,
                                              neuron_dropout=args.drop_rate,
                                              c_in=c_in,
@@ -458,6 +474,18 @@ def main():
             f'b可学习{b_can_learn}',
             f'lambda下界{args.dtlif_lambda_lo}',
             f'lambda上界{args.dtlif_lambda_hi}',
+        ])
+    elif args.neuron_model == 'DGN':
+        c_can_learn = '是' if args.dgn_learn_c else '否'
+        w_can_learn = '是' if args.dgn_learn_w else '否'
+        run_name_parts.extend([
+            f'dgn_dt{args.dgn_dt}',
+            f'dgn_gl{args.dgn_gl}',
+            f'dgn_Cinit{args.dgn_c_init}',
+            f'dgn_Winit{args.dgn_w_init}',
+            f'dgn_C可学习{c_can_learn}',
+            f'dgn_W可学习{w_can_learn}',
+            f'dgn_phi{args.dgn_phi}',
         ])
     if args.neuron_model == 'LSLIF':
         history_weight_can_learn = '是' if args.history_learn_weight else '否'
