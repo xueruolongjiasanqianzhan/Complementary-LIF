@@ -790,6 +790,7 @@ class LIFDGNNeuron(nn.Module):
         lifdgn_detach_prev: bool = False,
         lifdgn_temporal_mode: str = 'linear',
         lifdgn_disable_temporal: bool = False,
+        lifdgn_bilinear_chunk_size: int = 2048,
         **kwargs,
     ):
         super().__init__()
@@ -807,6 +808,7 @@ class LIFDGNNeuron(nn.Module):
         self.lifdgn_nonlinear_input = bool(lifdgn_nonlinear_input)
         self.lifdgn_detach_prev = bool(lifdgn_detach_prev)
         self.lifdgn_disable_temporal = bool(lifdgn_disable_temporal)
+        self.lifdgn_bilinear_chunk_size = int(max(0, lifdgn_bilinear_chunk_size))
         self.lifdgn_temporal_mode = str(lifdgn_temporal_mode).lower()
         if self.lifdgn_temporal_mode not in {'linear', 'event'}:
             raise ValueError(
@@ -881,9 +883,21 @@ class LIFDGNNeuron(nn.Module):
         bsz, channels, height, width = x_a.shape
         x1 = x_a.permute(0, 2, 3, 1).reshape(-1, channels)
         x2 = x_b.permute(0, 2, 3, 1).reshape(-1, channels)
-        qinput = torch.bmm(x1.unsqueeze(-1), x2.unsqueeze(-2)).reshape(-1, channels * channels)
         masked_weight = (weight * mask).reshape(channels, -1)
-        y = F.linear(qinput, masked_weight).reshape(bsz, height, width, channels).permute(0, 3, 1, 2)
+        positions = x1.shape[0]
+        chunk_size = self.lifdgn_bilinear_chunk_size
+        if chunk_size <= 0 or positions <= chunk_size:
+            qinput = torch.bmm(x1.unsqueeze(-1), x2.unsqueeze(-2)).reshape(-1, channels * channels)
+            y_flat = F.linear(qinput, masked_weight)
+        else:
+            y_flat = x1.new_empty((positions, channels))
+            for start in range(0, positions, chunk_size):
+                end = min(start + chunk_size, positions)
+                q_chunk = torch.bmm(x1[start:end].unsqueeze(-1), x2[start:end].unsqueeze(-2)).reshape(
+                    -1, channels * channels
+                )
+                y_flat[start:end] = F.linear(q_chunk, masked_weight)
+        y = y_flat.reshape(bsz, height, width, channels).permute(0, 3, 1, 2)
         return y
 
     def _nonlinear_input(self, x: torch.Tensor):
