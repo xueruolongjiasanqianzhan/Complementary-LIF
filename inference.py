@@ -74,7 +74,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LSLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LSLIF, CLIF, PLIF, relu')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
@@ -108,6 +108,13 @@ def main():
     parser.add_argument('-dgn_learn_c', type=bool, default=True, help='for DGN only: make C trainable')
     parser.add_argument('-dgn_learn_w', type=bool, default=True, help='for DGN only: make W trainable')
     parser.add_argument('-dgn_phi', type=str, default='sigmoid', choices=['sigmoid', 'hard_sigmoid', 'identity'], help='for DGN only: truncation function φ')
+    parser.add_argument('-lifdgn_dt', type=float, default=1.0, help='for LIFDGN only: simulation step size Δt')
+    parser.add_argument('-lifdgn_tau_trace', type=float, default=2.0, help='for LIFDGN only: time constant of input trace S_t')
+    parser.add_argument('-lifdgn_g0', type=float, default=0.5, help='for LIFDGN only: base leak conductance g0')
+    parser.add_argument('-lifdgn_c', type=float, default=0.01, help='for LIFDGN only: dynamic leak coefficient c')
+    parser.add_argument('-lifdgn_learn_g0', type=bool, default=True, help='for LIFDGN only: make g0 trainable')
+    parser.add_argument('-lifdgn_learn_c', type=bool, default=True, help='for LIFDGN only: make c trainable')
+    parser.add_argument('-lifdgn_g_max', type=float, default=10.0, help='for LIFDGN only: upper bound for dynamic leak g_t')
 
     args = parser.parse_args()
     print(args)
@@ -320,6 +327,8 @@ def main():
         neuron_model = neuron.DTLIFNeuron
     elif args.neuron_model == 'DGN':
         neuron_model = neuron.DGNNeuron
+    elif args.neuron_model == 'LIFDGN':
+        neuron_model = neuron.LIFDGNNeuron
     elif args.neuron_model == 'LSLIF':
         neuron_model = neuron.LSLIFNeuron
     elif args.neuron_model == 'CLIF':
@@ -360,6 +369,13 @@ def main():
         dgn_learn_c=args.dgn_learn_c,
         dgn_learn_w=args.dgn_learn_w,
         dgn_phi=args.dgn_phi,
+        lifdgn_dt=args.lifdgn_dt,
+        lifdgn_tau_trace=args.lifdgn_tau_trace,
+        lifdgn_g0=args.lifdgn_g0,
+        lifdgn_c=args.lifdgn_c,
+        lifdgn_learn_g0=args.lifdgn_learn_g0,
+        lifdgn_learn_c=args.lifdgn_learn_c,
+        lifdgn_g_max=args.lifdgn_g_max,
         history_weight=args.history_weight,
         history_power=args.history_power,
         history_eps=args.history_eps,
@@ -458,6 +474,13 @@ def main():
             f'_c{args.dgn_c_init}_w{args.dgn_w_init}'
             f'_lc{int(args.dgn_learn_c)}_lw{int(args.dgn_learn_w)}'
             f'_phi{args.dgn_phi}'
+        )
+    elif args.neuron_model == 'LIFDGN':
+        out_dir += (
+            f'_dt{args.lifdgn_dt}_tauS{args.lifdgn_tau_trace}'
+            f'_g0{args.lifdgn_g0}_c{args.lifdgn_c}'
+            f'_lg0{int(args.lifdgn_learn_g0)}_lc{int(args.lifdgn_learn_c)}'
+            f'_gmax{args.lifdgn_g_max}'
         )
 
     # if args.lr_scheduler == 'CosALR':

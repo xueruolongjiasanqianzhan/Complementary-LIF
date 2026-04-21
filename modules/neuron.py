@@ -753,6 +753,106 @@ class DGNNeuron(nn.Module):
         return spike.to(dtype=x.dtype)
 
 
+class LIFDGNNeuron(nn.Module):
+    """
+    LIF with dynamic leak modulation inspired by DGN.
+
+    Dynamics:
+      S_t = exp(-dt / tau_trace) * S_{t-1} + I_t
+      g_t = g0 + c * S_t
+      lambda_t = exp(-dt * g_t)
+      V_t = lambda_t * V_{t-1} + I_t - theta * z_{t-1}
+    """
+
+    def __init__(
+        self,
+        tau: float = 2.0,
+        decay_input: bool = False,
+        v_threshold: float = 1.0,
+        v_reset: Optional[float] = None,
+        surrogate_function: Optional[Callable] = None,
+        detach_reset: bool = False,
+        tau_eps: float = 1e-6,
+        lifdgn_dt: float = 1.0,
+        lifdgn_tau_trace: float = 2.0,
+        lifdgn_g0: float = 0.5,
+        lifdgn_c: float = 0.01,
+        lifdgn_learn_g0: bool = True,
+        lifdgn_learn_c: bool = True,
+        lifdgn_g_max: float = 10.0,
+        **kwargs,
+    ):
+        super().__init__()
+        self.tau0 = float(tau)
+        self.decay_input = bool(decay_input)
+        self.v_threshold = float(v_threshold)
+        self.v_reset = v_reset
+        self.detach_reset = bool(detach_reset)
+        self.tau_eps = float(tau_eps)
+        self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
+
+        self.lifdgn_dt = float(lifdgn_dt)
+        self.lifdgn_tau_trace = float(lifdgn_tau_trace)
+        self.lifdgn_g_max = float(max(lifdgn_g_max, 1e-6))
+
+        g0_init = torch.tensor(float(lifdgn_g0), dtype=torch.float32)
+        c_init = torch.tensor(float(lifdgn_c), dtype=torch.float32)
+        if lifdgn_learn_g0:
+            self.g0 = nn.Parameter(g0_init)
+        else:
+            self.register_buffer('g0', g0_init)
+        if lifdgn_learn_c:
+            self.c = nn.Parameter(c_init)
+        else:
+            self.register_buffer('c', c_init)
+
+        self.v = None
+        self.syn_trace = None
+        self.prev_spike = None
+
+    def reset(self):
+        self.v = None
+        self.syn_trace = None
+        self.prev_spike = None
+
+    def _ensure_state(self, x: torch.Tensor):
+        need_init = (
+            self.v is None
+            or self.v.shape != x.shape
+            or self.v.device != x.device
+        )
+        if need_init:
+            self.v = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.syn_trace = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.prev_spike = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+
+        dt_t = torch.as_tensor(self.lifdgn_dt, dtype=self.v.dtype, device=self.v.device)
+        alpha = torch.exp(-dt_t / (self.lifdgn_tau_trace + self.tau_eps))
+        self.syn_trace = alpha * self.syn_trace + x_f
+
+        g0_t = self.g0.to(dtype=self.v.dtype, device=self.v.device)
+        c_t = self.c.to(dtype=self.v.dtype, device=self.v.device)
+        g_t = (g0_t + c_t * self.syn_trace).clamp(min=0.0, max=self.lifdgn_g_max)
+        lambda_t = torch.exp(-dt_t * g_t).clamp(min=0.0, max=1.0)
+
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+        self.v = lambda_t * self.v + x_f - th_f * self.prev_spike
+
+        spike = self.surrogate_function(self.v - th_f)
+        rs = spike.detach() if self.detach_reset else spike
+        self.prev_spike = rs
+
+        if self.v_reset is not None:
+            v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
+            self.v = torch.where(rs.bool(), v_reset_t, self.v)
+
+        return spike.to(dtype=x.dtype)
+
+
 class NewCLIFNeuron(BPTTNeuronTauDependent):
     """
     CLIF + tau-dependent dynamic tau (newLIFTauDep-style).
