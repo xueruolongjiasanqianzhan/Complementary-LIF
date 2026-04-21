@@ -758,10 +758,15 @@ class LIFDGNNeuron(nn.Module):
     LIF with dynamic leak modulation inspired by DGN.
 
     Dynamics:
-      S_t = exp(-dt / tau_trace) * S_{t-1} + I_t
+      S_t = exp(-dt / tau_trace) * S_{t-1} + Pool(z_{t-1})
       g_t = g0 + c * S_t
       lambda_t = exp(-dt * g_t)
       V_t = lambda_t * V_{t-1} + I_t - theta * z_{t-1}
+
+    Optional nonlinear input branch (DLIF-style):
+      I'_t = I_t + gamma_s * (s_t^T K_s s_t) + gamma_t * (s_t^T K_t s_{t-1})
+    where K_s/K_t are symmetric with zero diagonal, and
+    pairwise terms reduce to element-wise AND for binary spikes.
     """
 
     def __init__(
@@ -780,6 +785,10 @@ class LIFDGNNeuron(nn.Module):
         lifdgn_learn_g0: bool = True,
         lifdgn_learn_c: bool = True,
         lifdgn_g_max: float = 10.0,
+        lifdgn_nonlinear_input: bool = False,
+        lifdgn_temporal_gamma: float = 0.0,
+        lifdgn_detach_prev: bool = False,
+        lifdgn_temporal_mode: str = 'linear',
         **kwargs,
     ):
         super().__init__()
@@ -794,6 +803,14 @@ class LIFDGNNeuron(nn.Module):
         self.lifdgn_dt = float(lifdgn_dt)
         self.lifdgn_tau_trace = float(lifdgn_tau_trace)
         self.lifdgn_g_max = float(max(lifdgn_g_max, 1e-6))
+        self.lifdgn_nonlinear_input = bool(lifdgn_nonlinear_input)
+        self.lifdgn_detach_prev = bool(lifdgn_detach_prev)
+        self.lifdgn_temporal_mode = str(lifdgn_temporal_mode).lower()
+        if self.lifdgn_temporal_mode not in {'linear', 'event'}:
+            raise ValueError(
+                f"Unsupported lifdgn_temporal_mode: {lifdgn_temporal_mode}. Expected 'linear' or 'event'."
+            )
+        self.temporal_gamma = nn.Parameter(torch.tensor(float(lifdgn_temporal_gamma), dtype=torch.float32))
 
         g0_init = torch.tensor(float(lifdgn_g0), dtype=torch.float32)
         c_init = torch.tensor(float(lifdgn_c), dtype=torch.float32)
@@ -809,11 +826,17 @@ class LIFDGNNeuron(nn.Module):
         self.v = None
         self.syn_trace = None
         self.prev_spike = None
+        self.prev_input = None
+        self.weight = None
+        self.weight_temporal = None
+        self.register_buffer('mask_spatial', torch.empty(0), persistent=False)
+        self.register_buffer('mask_temporal', torch.empty(0), persistent=False)
 
     def reset(self):
         self.v = None
         self.syn_trace = None
         self.prev_spike = None
+        self.prev_input = None
 
     def _ensure_state(self, x: torch.Tensor):
         need_init = (
@@ -826,13 +849,65 @@ class LIFDGNNeuron(nn.Module):
             self.syn_trace = torch.zeros_like(x, dtype=torch.float32, device=x.device)
             self.prev_spike = torch.zeros_like(x, dtype=torch.float32, device=x.device)
 
+    def _pool_activity(self, z: torch.Tensor):
+        if z.dim() <= 1:
+            return z
+        reduce_dims = tuple(range(1, z.dim()))
+        pooled = z.mean(dim=reduce_dims, keepdim=True)
+        return pooled.expand_as(z)
+
+    def _ensure_nonlinear_params(self, x: torch.Tensor):
+        if not self.lifdgn_nonlinear_input or x.dim() != 4:
+            return
+        channels = int(x.shape[1])
+        need_init = self.weight is None or self.weight.shape[0] != channels
+        if need_init:
+            w = torch.zeros((channels, channels, channels), dtype=torch.float32, device=x.device)
+            wt = torch.zeros((channels, channels, channels), dtype=torch.float32, device=x.device)
+            self.weight = nn.Parameter(w)
+            self.weight_temporal = nn.Parameter(wt)
+
+            mask = torch.ones((channels, channels), dtype=torch.float32, device=x.device)
+            mask.fill_diagonal_(0.0)
+            mask = ((mask + mask.t()) > 0).to(dtype=torch.float32)
+            self.mask_spatial = mask.unsqueeze(0).expand(channels, -1, -1).clone()
+            self.mask_temporal = mask.unsqueeze(0).expand(channels, -1, -1).clone()
+
+    def _outer_linear(self, x_a: torch.Tensor, x_b: torch.Tensor, weight: torch.Tensor, mask: torch.Tensor):
+        if x_a.dim() != 4:
+            return torch.zeros_like(x_a)
+        bsz, channels, height, width = x_a.shape
+        x1 = x_a.permute(0, 2, 3, 1).reshape(-1, channels)
+        x2 = x_b.permute(0, 2, 3, 1).reshape(-1, channels)
+        qinput = torch.bmm(x1.unsqueeze(-1), x2.unsqueeze(-2)).reshape(-1, channels * channels)
+        masked_weight = (weight * mask).reshape(channels, -1)
+        y = F.linear(qinput, masked_weight).reshape(bsz, height, width, channels).permute(0, 3, 1, 2)
+        return y
+
+    def _nonlinear_input(self, x: torch.Tensor):
+        if not self.lifdgn_nonlinear_input or x.dim() != 4:
+            return x
+        self._ensure_nonlinear_params(x)
+        prev = torch.zeros_like(x) if self.prev_input is None else self.prev_input
+        if self.lifdgn_detach_prev:
+            prev = prev.detach()
+
+        y_spatial = self._outer_linear(x, x, self.weight, self.mask_spatial)
+        y_temporal = self._outer_linear(x, prev, self.weight_temporal, self.mask_temporal)
+        if self.lifdgn_temporal_mode == 'event':
+            y_temporal = torch.tanh(y_temporal)
+        y = x + y_spatial + self.temporal_gamma.to(dtype=x.dtype, device=x.device) * y_temporal
+        self.prev_input = x
+        return y
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         self._ensure_state(x)
-        x_f = x.to(torch.float32)
+        x_f = self._nonlinear_input(x.to(torch.float32))
 
         dt_t = torch.as_tensor(self.lifdgn_dt, dtype=self.v.dtype, device=self.v.device)
         alpha = torch.exp(-dt_t / (self.lifdgn_tau_trace + self.tau_eps))
-        self.syn_trace = alpha * self.syn_trace + x_f
+        pooled_activity = self._pool_activity(self.prev_spike)
+        self.syn_trace = alpha * self.syn_trace + pooled_activity
 
         g0_t = self.g0.to(dtype=self.v.dtype, device=self.v.device)
         c_t = self.c.to(dtype=self.v.dtype, device=self.v.device)
