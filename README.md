@@ -74,6 +74,9 @@ Quick comparison example (same setting, only neuron changed):
     # CLIF
     python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -neuron_model CLIF
 
+    # DGN (lightweight 2-hidden-layer network for DVS-CIFAR10)
+    python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -model dgn_dvscifar10_tiny -T 16 -neuron_model DGN -dgn_phi sigmoid
+
 ## Inference
 The inference setup could refer file: ``run_inference_script``
 

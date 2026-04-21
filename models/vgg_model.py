@@ -2,7 +2,7 @@ import torch
 from spikingjelly.clock_driven import layer
 
 __all__ = [
-    'vggsnn', 'snn5', 'snn5_noAP'
+    'vggsnn', 'snn5', 'snn5_noAP', 'dgn_dvscifar10_tiny'
 ]
 
 from torch import nn
@@ -94,6 +94,62 @@ def snn5(neuron: callable = None, num_classes=10, neuron_dropout=0.0, **kwargs):
 
 def snn5_noAP(neuron: callable = None, num_classes=10, neuron_dropout=0.0, **kwargs):
     return SNN5_noAP(neuron=neuron, num_classes=num_classes, dropout=neuron_dropout, **kwargs)
+
+
+class DGNDVSCIFAR10Tiny(nn.Module):
+    """
+    Lightweight 2-hidden-layer SNN for DVS-CIFAR10.
+
+    Hidden layers:
+      1) Conv-BN-Neuron (32ch) + AvgPool
+      2) Conv-BN-Neuron (64ch) + AvgPool
+    Head:
+      Flatten + Linear(10)
+    """
+
+    def __init__(self, neuron, num_classes=10, neuron_dropout=0.0, c_in=2, fc_hw=48, **kwargs):
+        super().__init__()
+        kwargs = dict(kwargs)
+        kwargs['_layer_counter'] = {'i': 0, 'total': 2}
+
+        self.block1 = nn.Sequential(
+            nn.Conv2d(c_in, 32, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+        )
+        self.neuron1 = _build_neuron(neuron, kwargs)
+        self.pool1 = nn.AvgPool2d(kernel_size=2)
+
+        self.block2 = nn.Sequential(
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+        )
+        self.neuron2 = _build_neuron(neuron, kwargs)
+        self.pool2 = nn.AvgPool2d(kernel_size=2)
+
+        hw = int(fc_hw) if fc_hw is not None else 48
+        feat_hw = max(1, hw // 4)
+        self.drop = layer.Dropout(neuron_dropout)
+        self.classifier = nn.Linear(64 * feat_hw * feat_hw, num_classes)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+
+    def forward(self, x):
+        x = self.block1(x)
+        x = self.neuron1(x)
+        x = self.pool1(x)
+
+        x = self.block2(x)
+        x = self.neuron2(x)
+        x = self.pool2(x)
+
+        x = self.drop(torch.flatten(x, start_dim=-3, end_dim=-1))
+        return self.classifier(x)
+
+
+def dgn_dvscifar10_tiny(neuron: callable = None, num_classes=10, neuron_dropout=0.0, **kwargs):
+    return DGNDVSCIFAR10Tiny(neuron=neuron, num_classes=num_classes, neuron_dropout=neuron_dropout, **kwargs)
 
 
 class Layer(nn.Module):

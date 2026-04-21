@@ -385,7 +385,7 @@ def main():
                                                   c_in=c_in,
                                                   fc_hw=in_dim if in_dim else None, **neuron_kwargs)
         print('using Spiking VGG model.')
-    elif args.model in ['vggsnn', 'snn5_noAP']:  # snn5_noAP use for statistical experiment
+    elif args.model in ['vggsnn', 'snn5_noAP', 'dgn_dvscifar10_tiny']:  # lightweight option for DGN on DVS-CIFAR10
         net = vgg_model.__dict__[args.model](neuron=neuron_model, num_classes=num_classes,
                                              neuron_dropout=args.drop_rate,
                                              c_in=c_in,
