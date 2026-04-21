@@ -119,6 +119,10 @@ def main():
     parser.add_argument('-lifdgn_learn_c', dest='lifdgn_learn_c', action='store_true', help='for LIFDGN only: make c trainable (default: enabled)')
     parser.add_argument('-lifdgn_fix_c', dest='lifdgn_learn_c', action='store_false', help='for LIFDGN only: freeze c (disable learning)')
     parser.add_argument('-lifdgn_g_max', type=float, default=10.0, help='for LIFDGN only: upper bound for dynamic leak g_t')
+    parser.add_argument('-lifdgn_nonlinear_input', action='store_true', help='for LIFDGN only: enable DLIF-style bilinear nonlinear input branch')
+    parser.add_argument('-lifdgn_temporal_gamma', type=float, default=0.0, help='for LIFDGN only: scale of temporal bilinear input branch')
+    parser.add_argument('-lifdgn_detach_prev', action='store_true', help='for LIFDGN only: detach previous input in temporal bilinear branch')
+    parser.add_argument('-lifdgn_temporal_mode', type=str, default='linear', choices=['linear', 'event'], help='for LIFDGN only: temporal branch mode')
     parser.set_defaults(dgn_learn_c=True, dgn_learn_w=True, lifdgn_learn_g0=True, lifdgn_learn_c=True)
 
     args = parser.parse_args()
@@ -381,6 +385,10 @@ def main():
         lifdgn_learn_g0=args.lifdgn_learn_g0,
         lifdgn_learn_c=args.lifdgn_learn_c,
         lifdgn_g_max=args.lifdgn_g_max,
+        lifdgn_nonlinear_input=args.lifdgn_nonlinear_input,
+        lifdgn_temporal_gamma=args.lifdgn_temporal_gamma,
+        lifdgn_detach_prev=args.lifdgn_detach_prev,
+        lifdgn_temporal_mode=args.lifdgn_temporal_mode,
         history_weight=args.history_weight,
         history_power=args.history_power,
         history_eps=args.history_eps,
