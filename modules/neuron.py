@@ -946,6 +946,56 @@ class LIFDGNNeuron(nn.Module):
         return spike.to(dtype=x.dtype)
 
 
+class LIFDGN2Neuron(LIFDGNNeuron):
+    """
+    Variant of LIFDGN with:
+      1) input-driven trace (uses I_t instead of Pool(z_{t-1}))
+      2) update order in one step:
+         receive input -> leak -> spike -> same-step soft reset
+
+    Dynamics:
+      S_t = exp(-dt / tau_trace) * S_{t-1} + I_t
+      g_t = g0 + c * S_t
+      lambda_t = exp(-dt * g_t)
+      U_t = lambda_t * (V_{t-1} + I_t)
+      z_t = Theta(U_t - theta)
+      V_t = U_t - theta * z_t
+    """
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = self._nonlinear_input(x.to(torch.float32))
+
+        dt_t = torch.as_tensor(self.lifdgn_dt, dtype=self.v.dtype, device=self.v.device)
+        alpha = torch.exp(-dt_t / (self.lifdgn_tau_trace + self.tau_eps))
+
+        # input-driven trace at neuron level:
+        # x_f is already post-synaptic aggregated current (weighted sum) for each neuron
+        self.syn_trace = alpha * self.syn_trace + x_f
+
+        g0_t = self.g0.to(dtype=self.v.dtype, device=self.v.device)
+        c_t = self.c.to(dtype=self.v.dtype, device=self.v.device)
+        g_t = (g0_t + c_t * self.syn_trace).clamp(min=0.0, max=self.lifdgn_g_max)
+        lambda_t = torch.exp(-dt_t * g_t).clamp(min=0.0, max=1.0)
+
+        # receive input then leak
+        self.v = lambda_t * (self.v + x_f)
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+
+        spike = self.surrogate_function(self.v - th_f)
+        rs = spike.detach() if self.detach_reset else spike
+
+        # same-step reset
+        self.v = self.v - th_f * rs
+        self.prev_spike = rs
+
+        if self.v_reset is not None:
+            v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
+            self.v = torch.where(rs.bool(), v_reset_t, self.v)
+
+        return spike.to(dtype=x.dtype)
+
+
 class NewCLIFNeuron(BPTTNeuronTauDependent):
     """
     CLIF + tau-dependent dynamic tau (newLIFTauDep-style).

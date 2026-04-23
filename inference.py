@@ -74,7 +74,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LSLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LSLIF, CLIF, PLIF, relu')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
@@ -339,6 +339,8 @@ def main():
         neuron_model = neuron.DGNNeuron
     elif args.neuron_model == 'LIFDGN':
         neuron_model = neuron.LIFDGNNeuron
+    elif args.neuron_model == 'LIFDGN2':
+        neuron_model = neuron.LIFDGN2Neuron
     elif args.neuron_model == 'LSLIF':
         neuron_model = neuron.LSLIFNeuron
     elif args.neuron_model == 'CLIF':
@@ -490,7 +492,7 @@ def main():
             f'_lc{int(args.dgn_learn_c)}_lw{int(args.dgn_learn_w)}'
             f'_phi{args.dgn_phi}'
         )
-    elif args.neuron_model == 'LIFDGN':
+    elif args.neuron_model in ['LIFDGN', 'LIFDGN2']:
         out_dir += (
             f'_dt{args.lifdgn_dt}_tauS{args.lifdgn_tau_trace}'
             f'_g0{args.lifdgn_g0}_c{args.lifdgn_c}'
