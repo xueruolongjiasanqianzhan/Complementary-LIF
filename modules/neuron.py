@@ -956,7 +956,7 @@ class LIFDGN2Neuron(LIFDGNNeuron):
     Dynamics:
       S_t = exp(-dt / tau_trace) * S_{t-1} + I_t
       g_t = g0 + c * S_t
-      lambda_t = exp(-dt * g_t)
+      lambda_t = sigmoid(1 - g_t)
       U_t = lambda_t * (V_{t-1} + I_t)
       z_t = Theta(U_t - theta)
       V_t = U_t - theta * z_t
@@ -976,7 +976,8 @@ class LIFDGN2Neuron(LIFDGNNeuron):
         g0_t = self.g0.to(dtype=self.v.dtype, device=self.v.device)
         c_t = self.c.to(dtype=self.v.dtype, device=self.v.device)
         g_t = (g0_t + c_t * self.syn_trace).clamp(min=0.0, max=self.lifdgn_g_max)
-        lambda_t = torch.exp(-dt_t * g_t).clamp(min=0.0, max=1.0)
+        one = torch.ones_like(g_t, dtype=self.v.dtype, device=self.v.device)
+        lambda_t = torch.sigmoid(one - g_t)
 
         # receive input then leak
         self.v = lambda_t * (self.v + x_f)
