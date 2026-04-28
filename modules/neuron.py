@@ -289,6 +289,80 @@ class LSLIFNeuron(nn.Module):
         return spike.to(dtype=x.dtype)
 
 
+class LSCLIFNeuron(LSLIFNeuron):
+    """
+    CLIF enhanced with LSLIF-style auxiliary history branch.
+
+    This neuron keeps all history-related interfaces from ``LSLIFNeuron`` while
+    adding CLIF's complementary memory state ``m``:
+      - history branch: n_t (no spike, no reset) for long-range residual memory
+      - complementary memory: m <- m * sigmoid(v / tau) + spike
+      - reset: standard LIF reset followed by complementary CLIF reset term
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.m = None
+
+    def reset(self):
+        super().reset()
+        self.m = None
+
+    def _ensure_state(self, x: torch.Tensor):
+        super()._ensure_state(x)
+        need_init_m = (
+            self.m is None
+            or self.m.shape != x.shape
+            or self.m.device != x.device
+        )
+        if need_init_m:
+            self.m = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+
+        tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
+        if self.decay_input:
+            v_t = self.v + (x_f - self.v) / (tau_eff + self.tau_eps)
+            n_t = self.n + (x_f - self.n) / (tau_eff + self.tau_eps)
+        else:
+            decay = 1.0 - 1.0 / (tau_eff + self.tau_eps)
+            decay = torch.clamp(decay, 0.0, 1.0)
+            v_t = self.v * decay + x_f
+            n_t = self.n * decay + x_f
+
+        self.step_count += 1
+        step_t = torch.as_tensor(float(self.step_count), device=v_t.device, dtype=v_t.dtype)
+        history_power = self._get_history_power(dtype=v_t.dtype, device=v_t.device)
+        norm = torch.pow(step_t + self.history_eps, history_power)
+        history_weight = self._get_history_weight(dtype=v_t.dtype, device=v_t.device, step_count=self.step_count)
+        history_term = history_weight * (n_t / norm)
+        if self.history_mode == 'post_spike':
+            history_term = history_term * self.has_fired.to(dtype=history_term.dtype)
+        total_mem = v_t + history_term
+
+        # CLIF complementary memory forming/strengthening
+        self.m = self.m * torch.sigmoid(v_t / (tau_eff + self.tau_eps))
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+        spike = self.surrogate_function(total_mem - th_f)
+        self.m = self.m + spike
+
+        rs = spike.detach() if self.detach_reset else spike
+        if self.v_reset is None:
+            self.v = v_t - rs * th_f
+        else:
+            v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
+            self.v = torch.where(rs.bool(), v_reset_t, v_t)
+
+        # CLIF complementary reset
+        self.v = self.v - rs * torch.sigmoid(self.m)
+
+        self.n = n_t
+        self.has_fired = torch.logical_or(self.has_fired, rs.bool())
+        return spike.to(dtype=x.dtype)
+
+
 class VanillaLIFNeuron(LIFNode_sj):
     def __init__(self, tau: float = 2., decay_input: bool = False, v_threshold: float = 1.,
                  v_reset: float = None, surrogate_function: Callable = Rectangle(),
@@ -987,6 +1061,44 @@ class LIFDGN2Neuron(LIFDGNNeuron):
         rs = spike.detach() if self.detach_reset else spike
 
         # same-step reset
+        self.v = self.v - th_f * rs
+        self.prev_spike = rs
+
+        if self.v_reset is not None:
+            v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
+            self.v = torch.where(rs.bool(), v_reset_t, self.v)
+
+        return spike.to(dtype=x.dtype)
+
+
+class LIFDGN3Neuron(LIFDGNNeuron):
+    """
+    Variant of LIFDGN2 with direct-input rho computation and no trace dynamics.
+
+    Differences from LIFDGN2:
+      1) remove D/synaptic-trace recursion entirely
+      2) directly use current input I_t to compute rho
+      3) membrane update uses low-pass mixing:
+           U_t = rho_t * V_{t-1} + (1 - rho_t) * I_t
+         followed by spike + same-step soft reset.
+    """
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = self._nonlinear_input(x.to(torch.float32))
+
+        g0_t = self.g0.to(dtype=self.v.dtype, device=self.v.device)
+        c_t = self.c.to(dtype=self.v.dtype, device=self.v.device)
+        g_t = (g0_t + c_t * x_f).clamp(min=0.0, max=self.lifdgn_g_max)
+        one = torch.ones_like(g_t, dtype=self.v.dtype, device=self.v.device)
+        rho_t = torch.sigmoid(one - g_t)
+
+        self.v = rho_t * self.v + (one - rho_t) * x_f
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+
+        spike = self.surrogate_function(self.v - th_f)
+        rs = spike.detach() if self.detach_reset else spike
+
         self.v = self.v - th_f * rs
         self.prev_spike = rs
 

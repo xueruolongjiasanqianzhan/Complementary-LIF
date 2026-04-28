@@ -77,7 +77,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LSLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSCLIF, CLIF, PLIF, relu')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
@@ -342,8 +342,12 @@ def main():
         neuron_model = neuron.LIFDGNNeuron
     elif args.neuron_model == 'LIFDGN2':
         neuron_model = neuron.LIFDGN2Neuron
+    elif args.neuron_model == 'LIFDGN3':
+        neuron_model = neuron.LIFDGN3Neuron
     elif args.neuron_model == 'LSLIF':
         neuron_model = neuron.LSLIFNeuron
+    elif args.neuron_model == 'LSCLIF':
+        neuron_model = neuron.LSCLIFNeuron
     elif args.neuron_model == 'CLIF':
         neuron_model = neuron.ComplementaryLIFNeuron
     elif args.neuron_model == 'PLIF':
@@ -520,7 +524,7 @@ def main():
             f'dgn_W可学习{w_can_learn}',
             f'dgn_phi{args.dgn_phi}',
         ])
-    elif args.neuron_model in ['LIFDGN', 'LIFDGN2']:
+    elif args.neuron_model in ['LIFDGN', 'LIFDGN2', 'LIFDGN3']:
         g0_can_learn = '是' if args.lifdgn_learn_g0 else '否'
         c_can_learn = '是' if args.lifdgn_learn_c else '否'
         run_name_parts.extend([
@@ -532,7 +536,7 @@ def main():
             f'lifdgn_c可学习{c_can_learn}',
             f'lifdgn_gmax{args.lifdgn_g_max}',
         ])
-    if args.neuron_model == 'LSLIF':
+    if args.neuron_model in ['LSLIF', 'LSCLIF']:
         history_weight_can_learn = '是' if args.history_learn_weight else '否'
         history_weight_per_step = '是' if args.history_weight_per_step else '否'
         history_power_can_learn = '是' if args.history_learn_power else '否'
