@@ -997,6 +997,44 @@ class LIFDGN2Neuron(LIFDGNNeuron):
         return spike.to(dtype=x.dtype)
 
 
+class LIFDGN3Neuron(LIFDGNNeuron):
+    """
+    Variant of LIFDGN2 with direct-input rho computation and no trace dynamics.
+
+    Differences from LIFDGN2:
+      1) remove D/synaptic-trace recursion entirely
+      2) directly use current input I_t to compute rho
+      3) membrane update uses low-pass mixing:
+           U_t = rho_t * V_{t-1} + (1 - rho_t) * I_t
+         followed by spike + same-step soft reset.
+    """
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = self._nonlinear_input(x.to(torch.float32))
+
+        g0_t = self.g0.to(dtype=self.v.dtype, device=self.v.device)
+        c_t = self.c.to(dtype=self.v.dtype, device=self.v.device)
+        g_t = (g0_t + c_t * x_f).clamp(min=0.0, max=self.lifdgn_g_max)
+        one = torch.ones_like(g_t, dtype=self.v.dtype, device=self.v.device)
+        rho_t = torch.sigmoid(one - g_t)
+
+        self.v = rho_t * self.v + (one - rho_t) * x_f
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+
+        spike = self.surrogate_function(self.v - th_f)
+        rs = spike.detach() if self.detach_reset else spike
+
+        self.v = self.v - th_f * rs
+        self.prev_spike = rs
+
+        if self.v_reset is not None:
+            v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
+            self.v = torch.where(rs.bool(), v_reset_t, self.v)
+
+        return spike.to(dtype=x.dtype)
+
+
 class NewCLIFNeuron(BPTTNeuronTauDependent):
     """
     CLIF + tau-dependent dynamic tau (newLIFTauDep-style).
