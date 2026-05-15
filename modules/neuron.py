@@ -416,9 +416,9 @@ class ZELIFNeuron(VanillaLIFNeuron):
         if self.zelif_enabled == 0.0 or x.dim() != 4:
             return torch.zeros_like(x)
         spikes = (x > 0).to(dtype=x.dtype)
-        padded = F.pad(spikes, (1, 1, 1, 1))
-        patches = padded.unfold(2, 3, 1).unfold(3, 3, 1)
-        codes = (patches * self.pattern_basis.to(dtype=x.dtype, device=x.device)).sum(dim=(-1, -2)).to(torch.long)
+        c = spikes.shape[1]
+        code_kernel = self.pattern_basis.to(dtype=x.dtype, device=x.device).repeat(c, 1, 1, 1)
+        codes = F.conv2d(spikes, code_kernel, bias=None, stride=1, padding=1, groups=c).to(torch.long)
         idx = self.code_to_idx.to(device=x.device)[codes]
         legal = idx >= 0
         idx_safe = idx.clamp_min(0)
