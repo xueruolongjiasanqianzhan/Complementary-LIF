@@ -77,7 +77,8 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSCLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), ZELIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSCLIF, CLIF, PLIF, relu')
+    parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
@@ -328,6 +329,8 @@ def main():
 
     if args.neuron_model == 'LIF':
         neuron_model = neuron.VanillaLIFNeuron
+    elif args.neuron_model == 'ZELIF':
+        neuron_model = neuron.ZELIFNeuron
     elif args.neuron_model == 'newLIF':
         neuron_model = neuron.BPTTNeuron
     elif args.neuron_model == 'newLIFTauDep':
@@ -409,6 +412,8 @@ def main():
         history_learn_power=args.history_learn_power,
         history_mode=args.history_mode,
     )
+    if args.neuron_model == 'ZELIF':
+        neuron_kwargs['zelif_alpha'] = args.zelif_alpha
 
     if args.model in ['spiking_resnet18', 'spiking_resnet34', 'spiking_resnet50', 'spiking_resnet101', 'spiking_resnet152']:
         net = spiking_resnet.__dict__[args.model](neuron=neuron_model, num_classes=num_classes,
