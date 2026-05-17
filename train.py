@@ -615,11 +615,12 @@ def main():
 
     out_dir = os.path.join(args.out_dir, '_'.join(run_name_parts))
 
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
+    is_main_process = (not use_ddp) or dist.get_rank() == 0
+    if is_main_process:
+        os.makedirs(out_dir, exist_ok=True)
         print(f'Mkdir {out_dir}.')
-    else:
-        print(out_dir)
+    if use_ddp:
+        dist.barrier()
 
     # save the initialization of parameters
     if args.save_init:
@@ -630,10 +631,11 @@ def main():
         }
         torch.save(checkpoint, os.path.join(out_dir, 'checkpoint_0.pth'))
 
-    with open(os.path.join(out_dir, 'args.txt'), 'w', encoding='utf-8') as args_txt:
-        args_txt.write(str(args))
+    if is_main_process:
+        with open(os.path.join(out_dir, 'args.txt'), 'w', encoding='utf-8') as args_txt:
+            args_txt.write(str(args))
 
-    writer = SummaryWriter(os.path.join(out_dir, 'logs'), purge_step=start_epoch)
+    writer = SummaryWriter(os.path.join(out_dir, 'logs'), purge_step=start_epoch) if is_main_process else None
 
     ##########################################################
     # training and testing
@@ -776,8 +778,9 @@ def main():
         train_loss /= train_samples
         train_acc /= train_samples
 
-        writer.add_scalar('train_loss', train_loss, epoch)
-        writer.add_scalar('train_acc', train_acc, epoch)
+        if writer is not None:
+            writer.add_scalar('train_loss', train_loss, epoch)
+            writer.add_scalar('train_acc', train_acc, epoch)
         lr_scheduler.step()
 
         ############### testing ###############
@@ -881,8 +884,9 @@ def main():
 
         test_loss /= test_samples
         test_acc /= test_samples
-        writer.add_scalar('test_loss', test_loss, epoch)
-        writer.add_scalar('test_acc', test_acc, epoch)
+        if writer is not None:
+            writer.add_scalar('test_loss', test_loss, epoch)
+            writer.add_scalar('test_acc', test_acc, epoch)
 
         ############### saving checkpoint ###############
         save_max = False
