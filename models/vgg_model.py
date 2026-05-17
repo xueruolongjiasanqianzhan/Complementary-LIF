@@ -8,7 +8,7 @@ __all__ = [
 from torch import nn
 
 
-def _build_neuron(neuron: callable, kwargs: dict):
+def _build_neuron(neuron: callable, kwargs: dict, zelif_kernel_size: int = 3):
     neuron_kwargs = dict(kwargs)
     counter = neuron_kwargs.get('_layer_counter')
     if neuron_kwargs.get('history_mode', 'all') == 'half' and isinstance(counter, dict):
@@ -18,6 +18,8 @@ def _build_neuron(neuron: callable, kwargs: dict):
         neuron_kwargs['total_layers'] = total
         counter['i'] = idx + 1
     neuron_kwargs.pop('_layer_counter', None)
+    if getattr(neuron, '__name__', '') == 'ZELIFNeuron':
+        neuron_kwargs['zelif_kernel_size'] = int(zelif_kernel_size)
     return neuron(**neuron_kwargs)
 
 
@@ -116,14 +118,14 @@ class DGNDVSCIFAR10Tiny(nn.Module):
             nn.Conv2d(c_in, 32, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(32),
         )
-        self.neuron1 = _build_neuron(neuron, kwargs)
+        self.neuron1 = _build_neuron(neuron, kwargs, zelif_kernel_size=3)
         self.pool1 = nn.AvgPool2d(kernel_size=2)
 
         self.block2 = nn.Sequential(
             nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(64),
         )
-        self.neuron2 = _build_neuron(neuron, kwargs)
+        self.neuron2 = _build_neuron(neuron, kwargs, zelif_kernel_size=3)
         self.pool2 = nn.AvgPool2d(kernel_size=2)
 
         hw = int(fc_hw) if fc_hw is not None else 48
@@ -159,7 +161,7 @@ class Layer(nn.Module):
             nn.Conv2d(in_plane, out_plane, kernel_size, stride, padding),
             nn.BatchNorm2d(out_plane)
         )
-        self.act = _build_neuron(neuron, kwargs)
+        self.act = _build_neuron(neuron, kwargs, zelif_kernel_size=kernel_size)
 
     def forward(self, x):
         x = self.fwd(x)

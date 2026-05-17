@@ -369,6 +369,81 @@ class VanillaLIFNeuron(LIFNode_sj):
                  detach_reset: bool = False, cupy_fp32_inference=False, **kwargs):
         super().__init__(tau, decay_input, v_threshold, v_reset, surrogate_function, detach_reset, cupy_fp32_inference)
 
+
+class ZELIFNeuron(VanillaLIFNeuron):
+    """
+    ZELIF = LIF + pattern branch with shared code->parameter lookup.
+    The pattern branch is enabled only for 3x3-conv associated activations.
+    """
+
+    def __init__(
+        self,
+        tau: float = 2.0,
+        decay_input: bool = False,
+        v_threshold: float = 1.0,
+        v_reset: float = None,
+        surrogate_function: Callable = Rectangle(),
+        detach_reset: bool = False,
+        cupy_fp32_inference: bool = False,
+        zelif_alpha: float = 0.1,
+        zelif_kernel_size: int = 3,
+        **kwargs,
+    ):
+        super().__init__(
+            tau=tau,
+            decay_input=decay_input,
+            v_threshold=v_threshold,
+            v_reset=v_reset,
+            surrogate_function=surrogate_function,
+            detach_reset=detach_reset,
+            cupy_fp32_inference=cupy_fp32_inference,
+        )
+        self.zelif_alpha = float(zelif_alpha)
+        self.zelif_enabled = 1.0 if int(zelif_kernel_size) == 3 else 0.0
+        self.register_buffer('pattern_basis', torch.pow(2, torch.arange(9, dtype=torch.float32)).view(1, 1, 3, 3))
+        self.register_buffer('count_basis', torch.ones((1, 1, 3, 3), dtype=torch.float32))
+        valid_codes = []
+        for code in range(1 << 9):
+            spikes = int(bin(code).count('1'))
+            if 2 <= spikes <= 3:
+                valid_codes.append(code)
+        valid_codes_t = torch.tensor(valid_codes, dtype=torch.long)
+        self.register_buffer('valid_codes', valid_codes_t)
+        code_to_idx = torch.full((1 << 9,), -1, dtype=torch.long)
+        code_to_idx[valid_codes_t] = torch.arange(valid_codes_t.numel(), dtype=torch.long)
+        self.register_buffer('code_to_idx', code_to_idx)
+        self.pattern_params = nn.Parameter(torch.zeros(valid_codes_t.numel(), dtype=torch.float32))
+        self._kernel_cache = {}
+
+    def _get_depthwise_kernel(self, base_kernel: torch.Tensor, channels: int, dtype: torch.dtype, device: torch.device):
+        key = (id(base_kernel), channels, dtype, device)
+        cached = self._kernel_cache.get(key)
+        if cached is None:
+            cached = base_kernel.to(dtype=dtype, device=device).repeat(channels, 1, 1, 1)
+            self._kernel_cache[key] = cached
+        return cached
+
+    def _pattern_branch(self, x: torch.Tensor) -> torch.Tensor:
+        if self.zelif_enabled == 0.0 or x.dim() != 4:
+            return torch.zeros_like(x)
+        spikes = (x > 0).to(dtype=x.dtype)
+        c = spikes.shape[1]
+        count_kernel = self._get_depthwise_kernel(self.count_basis, c, spikes.dtype, spikes.device)
+        counts = F.conv2d(spikes, count_kernel, bias=None, stride=1, padding=1, groups=c)
+        candidate_mask = (counts == 2) | (counts == 3)
+        if not bool(candidate_mask.any()):
+            return torch.zeros_like(x)
+        code_kernel = self._get_depthwise_kernel(self.pattern_basis, c, spikes.dtype, spikes.device)
+        codes = F.conv2d(spikes, code_kernel, bias=None, stride=1, padding=1, groups=c).to(torch.long)
+        idx = self.code_to_idx[codes]
+        legal = (idx >= 0) & candidate_mask
+        idx_safe = idx.clamp_min(0)
+        pattern_values = self.pattern_params[idx_safe] * legal.to(dtype=self.pattern_params.dtype)
+        return self.zelif_alpha * pattern_values.to(dtype=x.dtype)
+
+    def forward(self, x: torch.Tensor):
+        return super().forward(x + self._pattern_branch(x))
+
 class BPTTNeuron(nn.Module):
     """
     Baseline LIF with surrogate gradient and membrane state v (fp32).

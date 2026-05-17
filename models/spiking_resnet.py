@@ -5,7 +5,7 @@ __all__ = [
     'PreActResNet', 'spiking_resnet18', 'spiking_resnet34', 'spiking_resnet50', 'spiking_resnet101', 'spiking_resnet152'
 ]
 
-def _build_neuron(neuron: callable, kwargs: dict):
+def _build_neuron(neuron: callable, kwargs: dict, zelif_kernel_size: int = 3):
     neuron_kwargs = dict(kwargs)
     counter = neuron_kwargs.get('_layer_counter')
     if neuron_kwargs.get('history_mode', 'all') == 'half' and isinstance(counter, dict):
@@ -15,6 +15,8 @@ def _build_neuron(neuron: callable, kwargs: dict):
         neuron_kwargs['total_layers'] = total
         counter['i'] = idx + 1
     neuron_kwargs.pop('_layer_counter', None)
+    if getattr(neuron, '__name__', '') == 'ZELIFNeuron':
+        neuron_kwargs['zelif_kernel_size'] = int(zelif_kernel_size)
     return neuron(**neuron_kwargs)
 
 
@@ -40,8 +42,8 @@ class PreActBlock(nn.Module):
         else:
             self.shortcut = nn.Sequential()
 
-        self.relu1 = _build_neuron(neuron, kwargs)
-        self.relu2 = _build_neuron(neuron, kwargs)
+        self.relu1 = _build_neuron(neuron, kwargs, zelif_kernel_size=3)
+        self.relu2 = _build_neuron(neuron, kwargs, zelif_kernel_size=3)
 
     def forward(self, x):
         x = self.relu1(self.bn1(x))
@@ -76,9 +78,9 @@ class PreActBottleneck(nn.Module):
         else:
             self.shortcut = nn.Sequential()
 
-        self.relu1 = _build_neuron(neuron, kwargs)
-        self.relu2 = _build_neuron(neuron, kwargs)
-        self.relu3 = _build_neuron(neuron, kwargs)
+        self.relu1 = _build_neuron(neuron, kwargs, zelif_kernel_size=1)
+        self.relu2 = _build_neuron(neuron, kwargs, zelif_kernel_size=3)
+        self.relu3 = _build_neuron(neuron, kwargs, zelif_kernel_size=1)
 
     def forward(self, x):
         x = self.relu1(self.bn1(x))
@@ -117,7 +119,7 @@ class PreActResNet(nn.Module):
         self.drop = layer.Dropout(dropout)
         self.linear = nn.Linear(512 * block.expansion, num_classes)
 
-        self.relu1 = _build_neuron(neuron, kwargs)
+        self.relu1 = _build_neuron(neuron, kwargs, zelif_kernel_size=1)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
