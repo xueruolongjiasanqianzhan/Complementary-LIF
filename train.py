@@ -19,6 +19,7 @@ if not hasattr(np, 'typeDict'):
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributed as dist
 import torch.utils.data as data
 import torchvision
 import torchvision.datasets as datasets
@@ -27,8 +28,10 @@ from spikingjelly.clock_driven import functional, surrogate as surrogate_sj
 from spikingjelly.datasets.dvs128_gesture import DVS128Gesture
 from torch.cuda import amp
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data.dataloader import default_collate
 from torch.utils.tensorboard import SummaryWriter
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torchtoolbox.transform import Cutout
 from torchvision.transforms import autoaugment, transforms
 from torchvision.transforms.functional import InterpolationMode
@@ -80,6 +83,7 @@ def main():
     parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), ZELIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSCLIF, CLIF, PLIF, relu')
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
+    parser.add_argument('--ddp', action='store_true', help='enable DDP training when launched with torchrun')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
     parser.add_argument('-tau_mode', type=str, default='spike', help='for newLIF only: fixed or spike')
@@ -136,6 +140,14 @@ def main():
 
     args = parser.parse_args()
     print(args)
+
+    world_size_env = int(os.environ.get('WORLD_SIZE', '1'))
+    use_ddp = bool(args.ddp or world_size_env > 1)
+    local_rank = int(os.environ.get('LOCAL_RANK', '0'))
+    if use_ddp:
+        dist.init_process_group(backend='nccl')
+        torch.cuda.set_device(local_rank)
+    device = torch.device(f'cuda:{local_rank}' if use_ddp else 'cuda')
 
     _seed_ = args.seed
     random.seed(_seed_)
@@ -315,6 +327,30 @@ def main():
     else:
         raise NotImplementedError
 
+    if use_ddp:
+        train_sampler = DistributedSampler(train_data_loader.dataset, shuffle=True, drop_last=True)
+        test_sampler = DistributedSampler(test_data_loader.dataset, shuffle=False, drop_last=False)
+        train_data_loader = DataLoader(
+            train_data_loader.dataset,
+            batch_size=args.b,
+            sampler=train_sampler,
+            shuffle=False,
+            drop_last=True,
+            num_workers=args.j,
+            pin_memory=True,
+            collate_fn=getattr(train_data_loader, 'collate_fn', None),
+        )
+        test_data_loader = DataLoader(
+            test_data_loader.dataset,
+            batch_size=args.b,
+            sampler=test_sampler,
+            shuffle=False,
+            drop_last=False,
+            num_workers=args.j,
+            pin_memory=True,
+            collate_fn=getattr(test_data_loader, 'collate_fn', None),
+        )
+
     ##########################################################
     # model preparing
     ##########################################################
@@ -437,7 +473,9 @@ def main():
         raise NotImplementedError
 
     print('Total Parameters: %.2fM' % (sum(p.numel() for p in net.parameters()) / 1000000.0))
-    net.cuda()
+    net = net.to(device)
+    if use_ddp:
+        net = DDP(net, device_ids=[local_rank], output_device=local_rank)
 
     ##########################################################
     # optimizer preparing
@@ -603,6 +641,8 @@ def main():
     criterion_mse = nn.MSELoss()
 
     for epoch in range(start_epoch, args.epochs):
+        if use_ddp:
+            train_sampler.set_epoch(epoch)
         ############### training ###############
         start_time = time.time()
         net.train()
@@ -631,7 +671,7 @@ def main():
 
             batch_idx += 1
             if (args.dataset != 'DVSCIFAR10'):
-                frame = frame.float().cuda()
+                frame = frame.float().to(device, non_blocking=True)
                 if args.dataset == 'dvsgesture' or args.dataset == 'SHD' or args.dataset == "DVSCIFAR10-pt":
                     frame = frame.transpose(0, 1)
 
@@ -640,14 +680,14 @@ def main():
                 t_step = len(frame)
                 # print(t_step)
 
-            label = label.cuda()
+            label = label.to(device, non_blocking=True)
             label_real = torch.cat([label for _ in range(t_step)], 0)
 
             optimizer.zero_grad()
             out_all = []
             for t in range(t_step):
                 if (args.dataset == 'DVSCIFAR10'):
-                    input_frame = frame[t].float().cuda()
+                    input_frame = frame[t].float().to(device, non_blocking=True)
                     # print(input_frame.shape)
                 elif args.dataset == 'dvsgesture' or args.dataset == "SHD" or args.dataset == "DVSCIFAR10-pt":
                     input_frame = frame[t]
@@ -764,11 +804,11 @@ def main():
 
                 batch_idx += 1
                 if (args.dataset != 'DVSCIFAR10'):
-                    frame = frame.float().cuda()
+                    frame = frame.float().to(device, non_blocking=True)
 
                     if args.dataset == 'dvsgesture' or args.dataset == "SHD" or args.dataset == "DVSCIFAR10-pt":
                         frame = frame.transpose(0, 1)
-                label = label.cuda()
+                label = label.to(device, non_blocking=True)
 
                 t_step = args.T
                 if args.dataset == 'SHD':
@@ -781,7 +821,7 @@ def main():
                 for t in range(t_step):
 
                     if (args.dataset == 'DVSCIFAR10'):
-                        input_frame = frame[t].float().cuda()
+                        input_frame = frame[t].float().to(device, non_blocking=True)
                     elif args.dataset == 'dvsgesture' or args.dataset == "SHD" or args.dataset == "DVSCIFAR10-pt":
                         input_frame = frame[t]
                     else:
@@ -851,17 +891,18 @@ def main():
             save_max = True
 
         checkpoint = {
-            'net': net.state_dict(),
+            'net': (net.module.state_dict() if use_ddp else net.state_dict()),
             'optimizer': optimizer.state_dict(),
             'lr_scheduler': lr_scheduler.state_dict(),
             'epoch': epoch,
             'max_test_acc': max_test_acc
         }
 
-        if save_max:
+        if save_max and (not use_ddp or dist.get_rank() == 0):
             torch.save(checkpoint, os.path.join(out_dir, 'checkpoint_max.pth'))
 
-        torch.save(checkpoint, os.path.join(out_dir, 'checkpoint_latest.pth'))
+        if not use_ddp or dist.get_rank() == 0:
+            torch.save(checkpoint, os.path.join(out_dir, 'checkpoint_latest.pth'))
 
         total_time = time.time() - start_time
         info = f'epoch={epoch}, train_loss={train_loss}, train_acc={train_acc}, test_loss={test_loss}, test_acc={test_acc}, max_test_acc={max_test_acc}, total_time={total_time}, escape_time={(datetime.datetime.now() + datetime.timedelta(seconds=total_time * (args.epochs - epoch))).strftime("%Y-%m-%d %H:%M:%S")}'
