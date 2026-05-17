@@ -409,8 +409,9 @@ class ZELIFNeuron(VanillaLIFNeuron):
                 valid_codes.append(code)
         valid_codes_t = torch.tensor(valid_codes, dtype=torch.long)
         self.register_buffer('valid_codes', valid_codes_t)
-        self.code_to_idx = torch.full((1 << 9,), -1, dtype=torch.long)
-        self.code_to_idx[valid_codes_t] = torch.arange(valid_codes_t.numel(), dtype=torch.long)
+        code_to_idx = torch.full((1 << 9,), -1, dtype=torch.long)
+        code_to_idx[valid_codes_t] = torch.arange(valid_codes_t.numel(), dtype=torch.long)
+        self.register_buffer('code_to_idx', code_to_idx)
         self.pattern_params = nn.Parameter(torch.zeros(valid_codes_t.numel(), dtype=torch.float32))
         self._kernel_cache = {}
 
@@ -434,7 +435,7 @@ class ZELIFNeuron(VanillaLIFNeuron):
             return torch.zeros_like(x)
         code_kernel = self._get_depthwise_kernel(self.pattern_basis, c, spikes.dtype, spikes.device)
         codes = F.conv2d(spikes, code_kernel, bias=None, stride=1, padding=1, groups=c).to(torch.long)
-        idx = self.code_to_idx.to(device=x.device)[codes]
+        idx = self.code_to_idx[codes]
         legal = (idx >= 0) & candidate_mask
         idx_safe = idx.clamp_min(0)
         pattern_values = self.pattern_params[idx_safe] * legal.to(dtype=self.pattern_params.dtype)
