@@ -1,6 +1,8 @@
 import argparse
 import collections
+import csv
 import datetime
+import json
 import os
 import random
 import time
@@ -463,7 +465,9 @@ def main():
     else:
         raise NotImplementedError
 
-    print('Total Parameters: %.2fM' % (sum(p.numel() for p in net.parameters()) / 1000000.0))
+    total_params = sum(p.numel() for p in net.parameters())
+    trainable_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
+    print('Total Parameters: %.2fM' % (total_params / 1000000.0))
     net.cuda()
     #
     # ##########################################################
@@ -571,6 +575,19 @@ def main():
 
     with open(os.path.join(out_dir, 'args.txt'), 'w', encoding='utf-8') as args_txt:
         args_txt.write(str(args))
+    with open(os.path.join(out_dir, 'inference_summary.json'), 'w', encoding='utf-8') as f:
+        json.dump({
+            'dataset': args.dataset,
+            'model': args.model,
+            'neuron_model': args.neuron_model,
+            'seed': args.seed,
+            'batch_size': args.b,
+            'time_steps': args.T,
+            'total_params': int(total_params),
+            'trainable_params': int(trainable_params),
+            'total_params_m': float(total_params / 1e6),
+            'trainable_params_m': float(trainable_params / 1e6),
+        }, f, ensure_ascii=False, indent=2)
 
     ##########################################################
     #  testing
@@ -690,6 +707,7 @@ def main():
     print(f'test_spike_rate_layers={layer_spike_rates}')
     mem_cost = "after one epoch: %fGB" % (torch.cuda.max_memory_cached(0) / 1024 / 1024 / 1024)
     print(mem_cost)
+    gpu_mem_gb = torch.cuda.max_memory_cached(0) / 1024 / 1024 / 1024
 
 
 
@@ -716,10 +734,25 @@ def main():
         args_txt.write(info + "\n")
         args_txt.write(f'test_spike_rate_layers={layer_spike_rates}' + "\n")
         args_txt.write(mem_cost + "\n")
+        args_txt.write(f'total_params_m={total_params / 1e6}, trainable_params_m={trainable_params / 1e6}' + "\n")
 
         args_txt.write("Throughput" + "\n")
         args_txt.write(str(Throughput) + "\n")
 
+    with open(os.path.join(out_dir, 'inference_summary.json'), 'r', encoding='utf-8') as f:
+        infer_summary = json.load(f)
+    infer_summary.update({
+        'test_loss': float(test_loss),
+        'test_acc': float(test_acc),
+        'test_spike_rate_global': float(global_spike_rate),
+        'throughput_samples_per_sec': float(Throughput),
+        'gpu_mem_gb': float(gpu_mem_gb),
+        'eval_time_sec': float(total_time),
+    })
+    with open(os.path.join(out_dir, 'inference_summary.json'), 'w', encoding='utf-8') as f:
+        json.dump(infer_summary, f, ensure_ascii=False, indent=2)
+
+    spike_rate_collector.close()
 
     spike_rate_collector.close()
 
