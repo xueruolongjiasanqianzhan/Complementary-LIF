@@ -50,6 +50,48 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 
+class SpikeRateCollector:
+    def __init__(self, net):
+        self._handles = []
+        self._stats = collections.OrderedDict()
+        for name, module in net.named_modules():
+            if 'Neuron' in module.__class__.__name__:
+                self._stats[name] = {'sum': 0.0, 'count': 0.0}
+                self._handles.append(module.register_forward_hook(self._make_hook(name)))
+
+    def _make_hook(self, name):
+        def hook(_module, _inputs, outputs):
+            if not torch.is_tensor(outputs):
+                return
+            out = outputs.detach().float()
+            self._stats[name]['sum'] += out.sum().item()
+            self._stats[name]['count'] += out.numel()
+        return hook
+
+    def reset(self):
+        for stat in self._stats.values():
+            stat['sum'] = 0.0
+            stat['count'] = 0.0
+
+    def compute(self):
+        layer_rates = collections.OrderedDict()
+        total_sum = 0.0
+        total_count = 0.0
+        for name, stat in self._stats.items():
+            cnt = stat['count']
+            rate = (stat['sum'] / cnt) if cnt > 0 else 0.0
+            layer_rates[name] = rate
+            total_sum += stat['sum']
+            total_count += cnt
+        global_rate = (total_sum / total_count) if total_count > 0 else 0.0
+        return layer_rates, global_rate
+
+    def close(self):
+        for handle in self._handles:
+            handle.remove()
+        self._handles.clear()
+
+
 def main():
     parser = argparse.ArgumentParser(description='SNN training')
     parser.add_argument('-seed', default=2022, type=int)
@@ -636,6 +678,7 @@ def main():
             args_txt.write(str(args))
 
     writer = SummaryWriter(os.path.join(out_dir, 'logs'), purge_step=start_epoch) if is_main_process else None
+    spike_rate_collector = SpikeRateCollector(net)
 
     ##########################################################
     # training and testing
@@ -798,6 +841,7 @@ def main():
         test_acc = 0
         test_samples = 0
         batch_idx = 0
+        spike_rate_collector.reset()
         with torch.no_grad():
             for data in test_data_loader:
                 if args.dataset == 'SHD':
@@ -884,9 +928,13 @@ def main():
 
         test_loss /= test_samples
         test_acc /= test_samples
+        layer_spike_rates, global_spike_rate = spike_rate_collector.compute()
         if writer is not None:
             writer.add_scalar('test_loss', test_loss, epoch)
             writer.add_scalar('test_acc', test_acc, epoch)
+            writer.add_scalar('test_spike_rate/global', global_spike_rate, epoch)
+            for layer_name, layer_rate in layer_spike_rates.items():
+                writer.add_scalar(f'test_spike_rate/{layer_name}', layer_rate, epoch)
 
         ############### saving checkpoint ###############
         save_max = False
@@ -909,15 +957,19 @@ def main():
             torch.save(checkpoint, os.path.join(out_dir, 'checkpoint_latest.pth'))
 
         total_time = time.time() - start_time
-        info = f'epoch={epoch}, train_loss={train_loss}, train_acc={train_acc}, test_loss={test_loss}, test_acc={test_acc}, max_test_acc={max_test_acc}, total_time={total_time}, escape_time={(datetime.datetime.now() + datetime.timedelta(seconds=total_time * (args.epochs - epoch))).strftime("%Y-%m-%d %H:%M:%S")}'
+        info = f'epoch={epoch}, train_loss={train_loss}, train_acc={train_acc}, test_loss={test_loss}, test_acc={test_acc}, max_test_acc={max_test_acc}, total_time={total_time}, test_spike_rate_global={global_spike_rate}, escape_time={(datetime.datetime.now() + datetime.timedelta(seconds=total_time * (args.epochs - epoch))).strftime("%Y-%m-%d %H:%M:%S")}'
         print(info)
+        print(f'test_spike_rate_layers={layer_spike_rates}')
         mem_cost = "after one epoch: %fGB" % (torch.cuda.max_memory_cached(0) / 1024 / 1024 / 1024)
         print(mem_cost)
 
         with open(os.path.join(out_dir, 'args.txt'), 'a+', encoding='utf-8') as args_txt:
             args_txt.write("\n")
             args_txt.write(info + "\n")
+            args_txt.write(f'test_spike_rate_layers={layer_spike_rates}' + "\n")
             args_txt.write(mem_cost + "\n")
+
+    spike_rate_collector.close()
 
 
 if __name__ == '__main__':
