@@ -1264,6 +1264,64 @@ class NewCLIFNeuron(BPTTNeuronTauDependent):
         return spike.to(dtype=x.dtype)
 
 
+class LSPLIFNeuron(LSLIFNeuron):
+    """
+    PLIF + LSLIF history branch.
+
+    - Main membrane uses learnable PLIF-style time constant tau=softplus(w).
+    - History branch n follows the same tau (shared with main branch).
+    """
+
+    def __init__(self, init_tau: Optional[float] = None, **kwargs):
+        tau = float(kwargs.get('tau', 2.0) if init_tau is None else init_tau)
+        super().__init__(**kwargs)
+        inv_sp = float(np.log(np.exp(max(tau, 1e-4)) - 1.0))
+        self.w = nn.Parameter(torch.tensor(inv_sp, dtype=torch.float32))
+
+    def _tau_eff(self, dtype: torch.dtype, device: torch.device):
+        # shared tau between PLIF main branch and LS history branch
+        tau_eff = F.softplus(self.w)
+        return tau_eff.to(dtype=dtype, device=device)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+
+        tau_eff = self._tau_eff(dtype=self.v.dtype, device=self.v.device)
+        if self.decay_input:
+            m_t = self.v + (x_f - self.v) / (tau_eff + self.tau_eps)
+            n_t = self.n + (x_f - self.n) / (tau_eff + self.tau_eps)
+        else:
+            decay = 1.0 - 1.0 / (tau_eff + self.tau_eps)
+            decay = torch.clamp(decay, 0.0, 1.0)
+            m_t = self.v * decay + x_f
+            n_t = self.n * decay + x_f
+
+        self.step_count += 1
+        step_t = torch.as_tensor(float(self.step_count), device=m_t.device, dtype=m_t.dtype)
+        history_power = self._get_history_power(dtype=m_t.dtype, device=m_t.device)
+        norm = torch.pow(step_t + self.history_eps, history_power)
+        history_weight = self._get_history_weight(dtype=m_t.dtype, device=m_t.device, step_count=self.step_count)
+        history_term = history_weight * (n_t / norm)
+        if self.history_mode == 'post_spike':
+            history_term = history_term * self.has_fired.to(dtype=history_term.dtype)
+        total_mem = m_t + history_term
+
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+        spike = self.surrogate_function(total_mem - th_f)
+
+        rs = spike.detach() if self.detach_reset else spike
+        if self.v_reset is None:
+            self.v = m_t - rs * th_f
+        else:
+            v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
+            self.v = torch.where(rs.bool(), v_reset_t, m_t)
+
+        self.n = n_t
+        self.has_fired = torch.logical_or(self.has_fired, rs.bool())
+        return spike.to(dtype=x.dtype)
+
+
 class PLIFNeuron(PLIFNode_sj):
     def __init__(self, tau: float = 2., decay_input: bool = False, v_threshold: float = 1.,
                  v_reset: float = None, surrogate_function: Callable = None,
