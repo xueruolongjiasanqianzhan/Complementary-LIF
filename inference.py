@@ -117,7 +117,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LSLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LSLIF, LSLIF2, CLIF, PLIF, relu')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
@@ -170,6 +170,9 @@ def main():
     parser.set_defaults(dgn_learn_c=True, dgn_learn_w=True, lifdgn_learn_g0=True, lifdgn_learn_c=True)
 
     args = parser.parse_args()
+    if args.neuron_model == 'LSLIF2' and abs(float(args.history_power) - 1.0) > 1e-12:
+        print('警告: LSLIF2 的历史支路是输入时间平均，不使用 history_power；将固定为 1.0。')
+        args.history_power = 1.0
     print(args)
 
     _seed_ = args.seed
@@ -386,6 +389,8 @@ def main():
         neuron_model = neuron.LIFDGN2Neuron
     elif args.neuron_model == 'LSLIF':
         neuron_model = neuron.LSLIFNeuron
+    elif args.neuron_model == 'LSLIF2':
+        neuron_model = neuron.LSLIF2Neuron
     elif args.neuron_model == 'CLIF':
         neuron_model = neuron.ComplementaryLIFNeuron
     elif args.neuron_model == 'PLIF':
@@ -522,7 +527,7 @@ def main():
 
     if args.neuron_model != 'LIF':
         out_dir += f'_{args.neuron_model}_'
-    if args.neuron_model == 'LSLIF':
+    if args.neuron_model in ['LSLIF', 'LSLIF2']:
         out_dir += f'_hw{args.history_weight}_hp{args.history_power}_he{args.history_eps}_hm{args.history_mode}_hlw{int(args.history_learn_weight)}'
     elif args.neuron_model == 'DTLIF':
         out_dir += (

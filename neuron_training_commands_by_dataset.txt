@@ -47,7 +47,9 @@ python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T
   -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
 
 # LSLIF（特有参数：history 分支）
+# LSLIF2（特有参数：history 分支，支路为历史输入平均）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF \
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF2 \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
 # LSCLIF（特有参数：history 分支）
@@ -82,6 +84,7 @@ python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model LIFDGN2 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model LIFDGN3 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model LSLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model LSLIF2 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model LSCLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model LSPLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model PLIF
@@ -105,6 +108,7 @@ python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIFDGN2 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIFDGN3 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSLIF2 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSCLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSPLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model PLIF
@@ -128,6 +132,7 @@ python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -m
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIFDGN2 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIFDGN3 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSLIF2 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSCLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSPLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model PLIF
@@ -151,6 +156,7 @@ python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIFDGN2 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIFDGN3 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF2 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSCLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSPLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model PLIF

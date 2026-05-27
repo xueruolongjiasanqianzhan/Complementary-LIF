@@ -289,6 +289,74 @@ class LSLIFNeuron(nn.Module):
         return spike.to(dtype=x.dtype)
 
 
+class LSLIF2Neuron(LSLIFNeuron):
+    """
+    LSLIF variant whose auxiliary branch uses the running average of inputs.
+
+    Main membrane dynamics and reset behavior are the same as ``LSLIFNeuron``.
+    The history branch is replaced with
+
+      history_t = beta * (sum_{i=1..t} x_i) / t
+
+    i.e., no decay over time in the auxiliary branch.
+    """
+
+    def __init__(self, *args, **kwargs):
+        kwargs['history_power'] = 1.0
+        kwargs['history_learn_power'] = False
+        super().__init__(*args, **kwargs)
+        self.x_sum = None
+
+    def reset(self):
+        super().reset()
+        self.x_sum = None
+
+    def _ensure_state(self, x: torch.Tensor):
+        super()._ensure_state(x)
+        need_init = (
+            self.x_sum is None
+            or self.x_sum.shape != x.shape
+            or self.x_sum.device != x.device
+        )
+        if need_init:
+            self.x_sum = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+
+        tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
+        if self.decay_input:
+            m_t = self.v + (x_f - self.v) / (tau_eff + self.tau_eps)
+        else:
+            decay = 1.0 - 1.0 / (tau_eff + self.tau_eps)
+            decay = torch.clamp(decay, 0.0, 1.0)
+            m_t = self.v * decay + x_f
+
+        self.step_count += 1
+        self.x_sum = self.x_sum + x_f
+        step_t = torch.as_tensor(float(self.step_count), device=m_t.device, dtype=m_t.dtype)
+        history_avg = self.x_sum / (step_t + self.history_eps)
+        history_weight = self._get_history_weight(dtype=m_t.dtype, device=m_t.device, step_count=self.step_count)
+        history_term = history_weight * history_avg
+        if self.history_mode == 'post_spike':
+            history_term = history_term * self.has_fired.to(dtype=history_term.dtype)
+        total_mem = m_t + history_term
+
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+        spike = self.surrogate_function(total_mem - th_f)
+
+        rs = spike.detach() if self.detach_reset else spike
+        if self.v_reset is None:
+            self.v = m_t - rs * th_f
+        else:
+            v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
+            self.v = torch.where(rs.bool(), v_reset_t, m_t)
+
+        self.has_fired = torch.logical_or(self.has_fired, rs.bool())
+        return spike.to(dtype=x.dtype)
+
+
 class LSCLIFNeuron(LSLIFNeuron):
     """
     CLIF enhanced with LSLIF-style auxiliary history branch.

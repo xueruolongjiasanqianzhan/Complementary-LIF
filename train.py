@@ -124,7 +124,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), ZELIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSCLIF, LSPLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), ZELIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSCLIF, LSPLIF, CLIF, PLIF, relu')
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('--ddp', action='store_true', help='enable DDP training when launched with torchrun')
@@ -183,6 +183,10 @@ def main():
     parser.set_defaults(dgn_learn_c=True, dgn_learn_w=True, lifdgn_learn_g0=True, lifdgn_learn_c=True)
 
     args = parser.parse_args()
+    if args.neuron_model == 'LSLIF2' and (args.history_learn_power or abs(float(args.history_power) - 1.0) > 1e-12):
+        print('警告: LSLIF2 的历史支路是输入时间平均，不使用 history_power；将固定为 1.0，history_learn_power 无效。')
+        args.history_power = 1.0
+        args.history_learn_power = False
     print(args)
 
     world_size_env = int(os.environ.get('WORLD_SIZE', '1'))
@@ -429,6 +433,8 @@ def main():
         neuron_model = neuron.LIFDGN3Neuron
     elif args.neuron_model == 'LSLIF':
         neuron_model = neuron.LSLIFNeuron
+    elif args.neuron_model == 'LSLIF2':
+        neuron_model = neuron.LSLIF2Neuron
     elif args.neuron_model == 'LSCLIF':
         neuron_model = neuron.LSCLIFNeuron
     elif args.neuron_model == 'LSPLIF':
@@ -627,7 +633,7 @@ def main():
             f'lifdgn_c可学习{c_can_learn}',
             f'lifdgn_gmax{args.lifdgn_g_max}',
         ])
-    if args.neuron_model in ['LSLIF', 'LSCLIF', 'LSPLIF']:
+    if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSCLIF', 'LSPLIF']:
         history_weight_can_learn = '是' if args.history_learn_weight else '否'
         history_weight_per_step = '是' if args.history_weight_per_step else '否'
         history_power_can_learn = '是' if args.history_learn_power else '否'
