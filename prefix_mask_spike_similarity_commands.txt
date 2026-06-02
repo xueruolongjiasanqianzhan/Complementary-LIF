@@ -1,0 +1,58 @@
+# 前缀屏蔽脉冲序列相似度分析命令
+#
+# 说明：
+# 1) 这个文件和 neuron_training_commands_by_dataset.txt 一样，只保存可复制运行的命令，不是 shell 脚本。
+# 2) 运行前请把下面命令中的占位路径替换成你的真实路径。
+# 3) 如果实验是 resume 之后继续训练的，可以使用 resume 后日志目录中的 args.txt；只要该 args.txt 与 checkpoint_max.pth 的模型结构、神经元类型和 history/tau 等设置一致即可。
+# 4) 输出包括：spike_similarity_summary.csv、spike_similarity_curves.csv、suffix_performance_summary.csv、config.json，以及 figures/similarity_curve.png、layer_heatmap.png、suffix_performance.png、raster_example.png。
+
+############################################################
+# DVS-CIFAR10: LIF vs LSLIF, VGG11, T=16, k=2/4/8
+############################################################
+
+python analysis/prefix_mask_spike_similarity.py \
+  --lif-checkpoint /path/to/lif_log/checkpoint_max.pth \
+  --lsl-checkpoint /path/to/lslif_log/checkpoint_max.pth \
+  --lif-args /path/to/lif_log/args.txt \
+  --lsl-args /path/to/lslif_log/args.txt \
+  --data-dir /path/to/DVS-CIFAR10 \
+  --out-dir analysis_results/prefix_mask_dvscifar10_lif_vs_lslif \
+  --T 16 \
+  --mask-prefixes 2 4 8 \
+  --batch-size 16 \
+  --workers 0 \
+  --layer-mode shallow_middle_deep
+
+############################################################
+# 可选：统计 VGG11 的全部 neuron 层，而不是只统计浅层/中层/后层
+############################################################
+
+python analysis/prefix_mask_spike_similarity.py \
+  --lif-checkpoint /path/to/lif_log/checkpoint_max.pth \
+  --lsl-checkpoint /path/to/lslif_log/checkpoint_max.pth \
+  --lif-args /path/to/lif_log/args.txt \
+  --lsl-args /path/to/lslif_log/args.txt \
+  --data-dir /path/to/DVS-CIFAR10 \
+  --out-dir analysis_results/prefix_mask_dvscifar10_lif_vs_lslif_all_layers \
+  --T 16 \
+  --mask-prefixes 2 4 8 \
+  --batch-size 16 \
+  --workers 0 \
+  --layer-mode all
+
+############################################################
+# 可选：手动指定 VGG11 neuron 层索引，例如第 1、4、8 个 neuron 层
+############################################################
+
+python analysis/prefix_mask_spike_similarity.py \
+  --lif-checkpoint /path/to/lif_log/checkpoint_max.pth \
+  --lsl-checkpoint /path/to/lslif_log/checkpoint_max.pth \
+  --lif-args /path/to/lif_log/args.txt \
+  --lsl-args /path/to/lslif_log/args.txt \
+  --data-dir /path/to/DVS-CIFAR10 \
+  --out-dir analysis_results/prefix_mask_dvscifar10_lif_vs_lslif_layers_1_4_8 \
+  --T 16 \
+  --mask-prefixes 2 4 8 \
+  --batch-size 16 \
+  --workers 0 \
+  --layer-indices 1 4 8
