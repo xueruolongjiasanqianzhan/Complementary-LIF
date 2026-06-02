@@ -1,8 +1,11 @@
 # 训练命令清单（按数据集划分，含神经元特有参数）
 # 说明：
-# 1) 所有命令都以你提供的 CLIF 基线命令为基础。
+# 1) 每个数据集都按 CIFAR-10 的详细格式展开：每个神经元单独给出说明与可复制命令。
 # 2) 每条命令都显式写出该神经元“特有参数”，且初始值与 train.py 默认值一致。
 # 3) 可直接复制运行；后续调参只改对应参数即可。
+# 4) 如需启用 ASN，可在任意 4D 卷积神经元实验命令后追加：
+#      -asn_enable -asn_p 0.5 -asn_rho 0.5 -asn_seed 2022
+#    如需阻断侧抑制场梯度，再追加：-asn_detach_lateral
 
 ############################################################
 # CIFAR-10
@@ -12,7 +15,8 @@
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIF
 
 # ZELIF（特有参数：-zelif_alpha=0.1）
-python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model ZELIF -zelif_alpha 0.1
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model ZELIF \
+  -zelif_alpha 0.1
 
 # newLIF（特有参数：tau 动态策略）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model newLIF \
@@ -26,33 +30,35 @@ python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model newCLIF \
   -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
 
-# DTLIF（特有参数）
+# DTLIF（特有参数：direct rho update）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model DTLIF \
   -dtlif_dt 1.0 -dtlif_a 0.1 -dtlif_b 0.1 -dtlif_lambda_lo 0.01 -dtlif_lambda_hi 5.0
 
-# DGN（特有参数）
+# DGN（特有参数：conductance branch）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model DGN \
   -dgn_dt 1.0 -dgn_gl 0.0 -dgn_c_init 0.01 -dgn_w_init 0.01 -dgn_phi sigmoid
 
-# LIFDGN
+# LIFDGN（特有参数：LIF + dynamic conductance）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIFDGN \
   -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
 
-# LIFDGN2
+# LIFDGN2（特有参数：LIFDGN variant）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIFDGN2 \
   -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
 
-# LIFDGN3
+# LIFDGN3（特有参数：LIFDGN variant）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIFDGN3 \
   -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
 
 # LSLIF（特有参数：history 分支）
-# LSLIF2（特有参数：history 分支，支路为历史输入平均）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# LSLIF2（特有参数：history 分支，支路为历史输入平均）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF2 \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
-# LSCLIF（特有参数：history 分支）
+# LSCLIF（特有参数：history 分支 + CLIF complementary memory）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSCLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
@@ -71,47 +77,135 @@ python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T
 # CIFAR-100
 ############################################################
 
-# 说明：与 CIFAR-10 保持同构配置，仅 dataset 改为 cifar100
+# 说明：与 CIFAR-10 保持同构配置，仅 dataset 改为 cifar100。
 
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model LIF
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model ZELIF -zelif_alpha 0.1
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model newLIF -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model newLIFTauDep -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model newCLIF -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model DTLIF -dtlif_dt 1.0 -dtlif_a 0.1 -dtlif_b 0.1 -dtlif_lambda_lo 0.01 -dtlif_lambda_hi 5.0
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model DGN -dgn_dt 1.0 -dgn_gl 0.0 -dgn_c_init 0.01 -dgn_w_init 0.01 -dgn_phi sigmoid
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model LIFDGN -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model LIFDGN2 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model LIFDGN3 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model LSLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model LSLIF2 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model LSCLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model LSPLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model PLIF
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model relu
+# LIF（vanilla，无额外特有参数）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIF
+
+# ZELIF（特有参数：-zelif_alpha=0.1）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model ZELIF \
+  -zelif_alpha 0.1
+
+# newLIF（特有参数：tau 动态策略）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model newLIF \
+  -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
+
+# newLIFTauDep（特有参数：tau dependent）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model newLIFTauDep \
+  -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
+
+# newCLIF（特有参数：CLIF + tau dependent）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model newCLIF \
+  -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
+
+# DTLIF（特有参数：direct rho update）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model DTLIF \
+  -dtlif_dt 1.0 -dtlif_a 0.1 -dtlif_b 0.1 -dtlif_lambda_lo 0.01 -dtlif_lambda_hi 5.0
+
+# DGN（特有参数：conductance branch）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model DGN \
+  -dgn_dt 1.0 -dgn_gl 0.0 -dgn_c_init 0.01 -dgn_w_init 0.01 -dgn_phi sigmoid
+
+# LIFDGN（特有参数：LIF + dynamic conductance）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIFDGN \
+  -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
+
+# LIFDGN2（特有参数：LIFDGN variant）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIFDGN2 \
+  -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
+
+# LIFDGN3（特有参数：LIFDGN variant）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIFDGN3 \
+  -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
+
+# LSLIF（特有参数：history 分支）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# LSLIF2（特有参数：history 分支，支路为历史输入平均）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF2 \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# LSCLIF（特有参数：history 分支 + CLIF complementary memory）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSCLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# LSPLIF（特有参数：history 分支 + PLIF 学习 tau）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSPLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# PLIF（可学习 tau，无额外 CLI 特有参数）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model PLIF
+
+# ReLU（非脉冲基线，train.py 内会将 T 置为 1）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model relu
 
 
 ############################################################
 # Tiny-Imagenet
 ############################################################
 
-# 说明：沿用你给的 tiny_imagenet + spiking_vgg13_bn 基础命令。
+# 说明：沿用 tiny_imagenet + spiking_vgg13_bn 基础命令。
 
+# LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIF
-python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model ZELIF -zelif_alpha 0.1
-python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model newLIF -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
-python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model newLIFTauDep -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
-python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model newCLIF -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
-python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model DTLIF -dtlif_dt 1.0 -dtlif_a 0.1 -dtlif_b 0.1 -dtlif_lambda_lo 0.01 -dtlif_lambda_hi 5.0
-python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model DGN -dgn_dt 1.0 -dgn_gl 0.0 -dgn_c_init 0.01 -dgn_w_init 0.01 -dgn_phi sigmoid
-python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIFDGN -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
-python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIFDGN2 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
-python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIFDGN3 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
-python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
-python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSLIF2 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
-python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSCLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
-python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSPLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# ZELIF（特有参数：-zelif_alpha=0.1）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model ZELIF \
+  -zelif_alpha 0.1
+
+# newLIF（特有参数：tau 动态策略）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model newLIF \
+  -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
+
+# newLIFTauDep（特有参数：tau dependent）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model newLIFTauDep \
+  -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
+
+# newCLIF（特有参数：CLIF + tau dependent）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model newCLIF \
+  -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
+
+# DTLIF（特有参数：direct rho update）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model DTLIF \
+  -dtlif_dt 1.0 -dtlif_a 0.1 -dtlif_b 0.1 -dtlif_lambda_lo 0.01 -dtlif_lambda_hi 5.0
+
+# DGN（特有参数：conductance branch）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model DGN \
+  -dgn_dt 1.0 -dgn_gl 0.0 -dgn_c_init 0.01 -dgn_w_init 0.01 -dgn_phi sigmoid
+
+# LIFDGN（特有参数：LIF + dynamic conductance）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIFDGN \
+  -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
+
+# LIFDGN2（特有参数：LIFDGN variant）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIFDGN2 \
+  -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
+
+# LIFDGN3（特有参数：LIFDGN variant）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIFDGN3 \
+  -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
+
+# LSLIF（特有参数：history 分支）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# LSLIF2（特有参数：history 分支，支路为历史输入平均）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSLIF2 \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# LSCLIF（特有参数：history 分支 + CLIF complementary memory）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSCLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# LSPLIF（特有参数：history 分支 + PLIF 学习 tau）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSPLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# PLIF（可学习 tau，无额外 CLI 特有参数）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model PLIF
+
+# ReLU（非脉冲基线，train.py 内会将 T 置为 1）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model relu
 
 
@@ -119,23 +213,67 @@ python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13
 # DVS-CIFAR10
 ############################################################
 
-# 说明：沿用你给的 DVS-CIFAR10 基础命令（T=10, drop_rate=0.3, lr=0.05, -mse_n_reg）
+# 说明：沿用 DVS-CIFAR10 基础命令（T=10, drop_rate=0.3, lr=0.05, -mse_n_reg）。
 
+# LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIF
-python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model ZELIF -zelif_alpha 0.1
-python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model newLIF -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
-python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model newLIFTauDep -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
-python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model newCLIF -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
-python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model DTLIF -dtlif_dt 1.0 -dtlif_a 0.1 -dtlif_b 0.1 -dtlif_lambda_lo 0.01 -dtlif_lambda_hi 5.0
-python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model DGN -dgn_dt 1.0 -dgn_gl 0.0 -dgn_c_init 0.01 -dgn_w_init 0.01 -dgn_phi sigmoid
-python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIFDGN -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
-python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIFDGN2 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
-python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIFDGN3 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
-python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
-python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSLIF2 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
-python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSCLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
-python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSPLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# ZELIF（特有参数：-zelif_alpha=0.1）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model ZELIF \
+  -zelif_alpha 0.1
+
+# newLIF（特有参数：tau 动态策略）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model newLIF \
+  -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
+
+# newLIFTauDep（特有参数：tau dependent）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model newLIFTauDep \
+  -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
+
+# newCLIF（特有参数：CLIF + tau dependent）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model newCLIF \
+  -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
+
+# DTLIF（特有参数：direct rho update）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model DTLIF \
+  -dtlif_dt 1.0 -dtlif_a 0.1 -dtlif_b 0.1 -dtlif_lambda_lo 0.01 -dtlif_lambda_hi 5.0
+
+# DGN（特有参数：conductance branch）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model DGN \
+  -dgn_dt 1.0 -dgn_gl 0.0 -dgn_c_init 0.01 -dgn_w_init 0.01 -dgn_phi sigmoid
+
+# LIFDGN（特有参数：LIF + dynamic conductance）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIFDGN \
+  -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
+
+# LIFDGN2（特有参数：LIFDGN variant）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIFDGN2 \
+  -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
+
+# LIFDGN3（特有参数：LIFDGN variant）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIFDGN3 \
+  -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
+
+# LSLIF（特有参数：history 分支）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# LSLIF2（特有参数：history 分支，支路为历史输入平均）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSLIF2 \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# LSCLIF（特有参数：history 分支 + CLIF complementary memory）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSCLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# LSPLIF（特有参数：history 分支 + PLIF 学习 tau）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSPLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# PLIF（可学习 tau，无额外 CLI 特有参数）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model PLIF
+
+# ReLU（非脉冲基线，train.py 内会将 T 置为 1）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model relu
 
 
@@ -143,21 +281,65 @@ python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -m
 # DVS-Gesture
 ############################################################
 
-# 说明：沿用你给的 DVS-Gesture 基础命令（T=20, b=16, drop_rate=0.4）
+# 说明：沿用 DVS-Gesture 基础命令（T=20, b=16, drop_rate=0.4）。
 
+# LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIF
-python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model ZELIF -zelif_alpha 0.1
-python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model newLIF -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
-python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model newLIFTauDep -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
-python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model newCLIF -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
-python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model DTLIF -dtlif_dt 1.0 -dtlif_a 0.1 -dtlif_b 0.1 -dtlif_lambda_lo 0.01 -dtlif_lambda_hi 5.0
-python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model DGN -dgn_dt 1.0 -dgn_gl 0.0 -dgn_c_init 0.01 -dgn_w_init 0.01 -dgn_phi sigmoid
-python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIFDGN -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
-python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIFDGN2 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
-python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIFDGN3 -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
-python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
-python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF2 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
-python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSCLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
-python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSPLIF -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# ZELIF（特有参数：-zelif_alpha=0.1）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model ZELIF \
+  -zelif_alpha 0.1
+
+# newLIF（特有参数：tau 动态策略）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model newLIF \
+  -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
+
+# newLIFTauDep（特有参数：tau dependent）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model newLIFTauDep \
+  -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
+
+# newCLIF（特有参数：CLIF + tau dependent）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model newCLIF \
+  -tau_mode spike -tau_lo 1.0 -tau_hi 5.0 -tau_eta 1.0 -tau_alpha_up 0.1 -tau_alpha_down 0.1 -tau_detach_spike True -tau_eps 1e-6
+
+# DTLIF（特有参数：direct rho update）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model DTLIF \
+  -dtlif_dt 1.0 -dtlif_a 0.1 -dtlif_b 0.1 -dtlif_lambda_lo 0.01 -dtlif_lambda_hi 5.0
+
+# DGN（特有参数：conductance branch）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model DGN \
+  -dgn_dt 1.0 -dgn_gl 0.0 -dgn_c_init 0.01 -dgn_w_init 0.01 -dgn_phi sigmoid
+
+# LIFDGN（特有参数：LIF + dynamic conductance）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIFDGN \
+  -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
+
+# LIFDGN2（特有参数：LIFDGN variant）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIFDGN2 \
+  -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
+
+# LIFDGN3（特有参数：LIFDGN variant）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIFDGN3 \
+  -lifdgn_dt 1.0 -lifdgn_tau_trace 2.0 -lifdgn_g0 0.5 -lifdgn_c 0.01 -lifdgn_g_max 10.0 -lifdgn_temporal_gamma 0.0 -lifdgn_temporal_mode linear
+
+# LSLIF（特有参数：history 分支）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# LSLIF2（特有参数：history 分支，支路为历史输入平均）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF2 \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# LSCLIF（特有参数：history 分支 + CLIF complementary memory）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSCLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# LSPLIF（特有参数：history 分支 + PLIF 学习 tau）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSPLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# PLIF（可学习 tau，无额外 CLI 特有参数）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model PLIF
+
+# ReLU（非脉冲基线，train.py 内会将 T 置为 1）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model relu
