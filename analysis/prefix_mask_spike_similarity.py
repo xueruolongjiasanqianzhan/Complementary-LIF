@@ -292,8 +292,24 @@ def resolve_target_layers(model: torch.nn.Module, layer_mode: str, layer_indices
     return {f'{pos + 1:02d}_{name}': module for pos, (name, module) in selected}
 
 
-def normalize_frames(frame: torch.Tensor, T: int) -> torch.Tensor:
-    """Return frames as [T, B, C, H, W]."""
+def normalize_frames(frame, T: int) -> torch.Tensor:
+    """Return DVS frames as [T, B, C, H, W].
+
+    CIFAR10DVS uses transforms that return a Python list with one tensor per
+    time step. PyTorch's default collate therefore yields ``frame`` as a list of
+    length ``T`` where each item is shaped [B, C, H, W]. Other DVS loaders may
+    already return a tensor, so both layouts are accepted here.
+    """
+    if isinstance(frame, (list, tuple)):
+        if len(frame) != T:
+            raise ValueError(f'Expected a list/tuple with {T} time steps, got {len(frame)}')
+        if not all(torch.is_tensor(step) for step in frame):
+            bad_types = [type(step).__name__ for step in frame[:3]]
+            raise TypeError(f'Expected all list/tuple items to be tensors, got first item types {bad_types}')
+        return torch.stack([step.float() for step in frame], dim=0)
+
+    if not torch.is_tensor(frame):
+        raise TypeError(f'Expected DVS frames as a tensor or list/tuple of tensors, got {type(frame).__name__}')
     if frame.dim() != 5:
         raise ValueError(f'Expected DVS frame tensor with 5 dims, got shape {tuple(frame.shape)}')
     if frame.shape[0] == T:
