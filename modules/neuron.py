@@ -258,7 +258,7 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
         if self.history_weight_hi <= self.history_weight_lo:
             raise ValueError('history_weight_hi must be larger than history_weight_lo.')
         self.history_power_lo = 0.0
-        self.history_power_hi = 1.0
+        self.history_power_hi = 2.0
         self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
         self._init_asn(
             asn_enable=asn_enable,
