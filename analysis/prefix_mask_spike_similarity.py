@@ -537,6 +537,48 @@ def plot_heatmap(summary_rows: List[dict], methods: List[str], layers: List[str]
     plt.close(fig)
 
 
+def plot_suffix_performance(performance_rows: List[dict], methods: List[str], mask_prefixes: List[int], out_path: Path):
+    plt = get_plt()
+    metrics = [
+        ('suffix_acc_drop', 'Suffix accuracy drop\n(full - masked)'),
+        ('suffix_true_conf_drop', 'True-class confidence drop\n(full - masked)'),
+        ('suffix_top1_flip_rate', 'Suffix top-1 flip rate'),
+    ]
+    lookup = {(row['method'], int(row['mask_prefix'])): row for row in performance_rows}
+    fig, axes = plt.subplots(1, len(metrics), figsize=(5.2 * len(metrics), 4), squeeze=False)
+    x = np.arange(len(mask_prefixes))
+    width = 0.8 / max(len(methods), 1)
+
+    for metric_idx, (metric_key, title) in enumerate(metrics):
+        ax = axes[0][metric_idx]
+        for method_idx, method in enumerate(methods):
+            values = [float(lookup.get((method, k), {}).get(metric_key, np.nan)) for k in mask_prefixes]
+            offset = (method_idx - (len(methods) - 1) / 2) * width
+            bars = ax.bar(x + offset, values, width=width, label=method)
+            for bar, value in zip(bars, values):
+                if np.isfinite(value):
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2,
+                        bar.get_height(),
+                        f'{value:.3f}',
+                        ha='center',
+                        va='bottom',
+                        fontsize=8,
+                    )
+        ax.axhline(0.0, color='black', linewidth=0.8)
+        ax.set_title(title)
+        ax.set_xlabel('mask prefix k')
+        ax.set_xticks(x)
+        ax.set_xticklabels(mask_prefixes)
+        ax.grid(True, axis='y', alpha=0.3)
+        ax.legend()
+
+    fig.suptitle('Suffix performance under prefix masking: lower drop/flip means not worse robustness', y=1.03)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+
+
 def make_raster_panel(spikes: torch.Tensor, max_neurons: int) -> Tuple[np.ndarray, np.ndarray]:
     # spikes: [T, ...] for one sample.
     flat = (spikes.flatten(start_dim=1) > 0).numpy().astype(np.float32)  # [T, M]
@@ -747,6 +789,7 @@ def main():
     layers = selected_layer_keys or []
     plot_curves(curve_rows, method_names, layers, cli.mask_prefixes, figures_dir / 'similarity_curve.png')
     plot_heatmap(summary_rows, method_names, layers, cli.mask_prefixes, figures_dir / 'layer_heatmap.png')
+    plot_suffix_performance(performance_rows, method_names, cli.mask_prefixes, figures_dir / 'suffix_performance.png')
     if deep_layer_key is not None:
         plot_raster(raster_cache, method_names, deep_layer_key, max_mask_prefix, figures_dir / 'raster_example.png', cli.max_raster_neurons)
 
