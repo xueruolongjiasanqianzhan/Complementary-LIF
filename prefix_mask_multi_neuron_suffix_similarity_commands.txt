@@ -1,0 +1,65 @@
+# 多神经元前缀屏蔽后缀脉冲序列相似度分析命令
+#
+# 说明：
+# 1) 这个文件和 neuron_training_commands_by_dataset.txt 一样，只保存可复制运行的命令，不是 shell 脚本。
+# 2) 这个实验不会覆盖之前 LIF vs LSLIF 的分析脚本；它使用新的脚本：
+#      analysis/prefix_mask_multi_neuron_suffix_similarity.py
+# 3) 运行前请把下面命令中的占位路径替换成真实的 checkpoint_max.pth 和 args.txt 路径。
+# 4) 每个 --run 后面依次是：显示名称 神经元模型 checkpoint_max.pth args.txt。
+# 5) 当前图只绘制屏蔽边界之后的后缀时间步 t > k，所有神经元方法会显示在同一张图的同一子图中。
+# 6) 输出包括：multi_neuron_suffix_similarity_curves.csv、multi_neuron_suffix_similarity_summary.csv、config.json，
+#    以及 figures/multi_neuron_suffix_similarity_curve.png。
+
+############################################################
+# DVS-CIFAR10: 多神经元后缀 similarity curve 对比，VGG11, T=16, k=2/4/8
+############################################################
+
+python analysis/prefix_mask_multi_neuron_suffix_similarity.py \
+  --run LIF LIF /path/to/lif_log/checkpoint_max.pth /path/to/lif_log/args.txt \
+  --run LSLIF LSLIF /path/to/lslif_log/checkpoint_max.pth /path/to/lslif_log/args.txt \
+  --run CLIF CLIF /path/to/clif_log/checkpoint_max.pth /path/to/clif_log/args.txt \
+  --run LSCLIF LSCLIF /path/to/lsclif_log/checkpoint_max.pth /path/to/lsclif_log/args.txt \
+  --run PLIF PLIF /path/to/plif_log/checkpoint_max.pth /path/to/plif_log/args.txt \
+  --run LSPLIF LSPLIF /path/to/lsplif_log/checkpoint_max.pth /path/to/lsplif_log/args.txt \
+  --data-dir /path/to/DVS-CIFAR10 \
+  --out-dir analysis_results/prefix_mask_multi_neuron_suffix_similarity \
+  --T 16 \
+  --mask-prefixes 2 4 8 \
+  --batch-size 16 \
+  --workers 0 \
+  --layer-mode shallow_middle_deep
+
+############################################################
+# 可选：只对比非 LS 神经元，例如 LIF / CLIF / PLIF
+############################################################
+
+python analysis/prefix_mask_multi_neuron_suffix_similarity.py \
+  --run LIF LIF /path/to/lif_log/checkpoint_max.pth /path/to/lif_log/args.txt \
+  --run CLIF CLIF /path/to/clif_log/checkpoint_max.pth /path/to/clif_log/args.txt \
+  --run PLIF PLIF /path/to/plif_log/checkpoint_max.pth /path/to/plif_log/args.txt \
+  --data-dir /path/to/DVS-CIFAR10 \
+  --out-dir analysis_results/prefix_mask_nonls_suffix_similarity \
+  --T 16 \
+  --mask-prefixes 2 4 8 \
+  --batch-size 16 \
+  --workers 0 \
+  --layer-mode shallow_middle_deep
+
+############################################################
+# 可选：指定 VGG11 neuron 层索引，例如第 1、4、8 个 neuron 层
+############################################################
+
+python analysis/prefix_mask_multi_neuron_suffix_similarity.py \
+  --run LIF LIF /path/to/lif_log/checkpoint_max.pth /path/to/lif_log/args.txt \
+  --run LSLIF LSLIF /path/to/lslif_log/checkpoint_max.pth /path/to/lslif_log/args.txt \
+  --run CLIF CLIF /path/to/clif_log/checkpoint_max.pth /path/to/clif_log/args.txt \
+  --run LSCLIF LSCLIF /path/to/lsclif_log/checkpoint_max.pth /path/to/lsclif_log/args.txt \
+  --run PLIF PLIF /path/to/plif_log/checkpoint_max.pth /path/to/plif_log/args.txt \
+  --run LSPLIF LSPLIF /path/to/lsplif_log/checkpoint_max.pth /path/to/lsplif_log/args.txt \
+  --data-dir /path/to/DVS-CIFAR10 \
+  --out-dir analysis_results/prefix_mask_multi_neuron_suffix_similarity_layers_1_4_8 \
+  --T 16 \
+  --mask-prefixes 2 4 8 \
+  --batch-size 16 \
+  --workers 0 \
+  --layer-indices 1 4 8
