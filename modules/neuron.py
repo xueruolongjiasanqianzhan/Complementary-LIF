@@ -10,6 +10,68 @@ from torch import nn
 from modules.surrogate import Rectangle
 
 
+class ASNFireMixin:
+    """Optional ASN-style local lateral inhibition for 4D spike maps.
+
+    The mixin is intentionally inert unless ``asn_enable`` is true so existing
+    non-ASN experiments keep their original spike generation path.
+    """
+
+    def _init_asn(
+        self,
+        asn_enable: bool = False,
+        asn_p: float = 0.5,
+        asn_rho: float = 0.5,
+        asn_seed: int = 2022,
+        asn_detach_lateral: bool = False,
+        layer_index: Optional[int] = None,
+    ):
+        self.asn_enable = bool(asn_enable)
+        self.asn_p = float(asn_p)
+        if not 0.0 <= self.asn_p <= 1.0:
+            raise ValueError('asn_p must be in [0, 1].')
+        self.asn_rho = float(asn_rho)
+        self.asn_seed = int(asn_seed)
+        self.asn_detach_lateral = bool(asn_detach_lateral)
+        self.asn_layer_index = int(layer_index) if layer_index is not None else 0
+        self.register_buffer('asn_mask', None, persistent=False)
+        base_kernel = torch.ones((1, 1, 3, 3), dtype=torch.float32) / 8.0
+        base_kernel[..., 1, 1] = 0.0
+        self.register_buffer('asn_kernel_base', base_kernel, persistent=False)
+
+    def _asn_build_mask(self, mem: torch.Tensor) -> torch.Tensor:
+        c, h, w = int(mem.shape[1]), int(mem.shape[2]), int(mem.shape[3])
+        seed = self.asn_seed + self.asn_layer_index * 1000003
+        gen = torch.Generator()
+        gen.manual_seed(seed)
+        mask = (torch.rand((1, c, h, w), generator=gen, dtype=torch.float32) < self.asn_p).to(torch.float32)
+        return mask.to(device=mem.device, dtype=mem.dtype)
+
+    def _asn_get_mask(self, mem: torch.Tensor) -> torch.Tensor:
+        need_new_mask = (
+            self.asn_mask is None
+            or tuple(self.asn_mask.shape) != (1, int(mem.shape[1]), int(mem.shape[2]), int(mem.shape[3]))
+            or self.asn_mask.device != mem.device
+            or self.asn_mask.dtype != mem.dtype
+        )
+        if need_new_mask:
+            self.asn_mask = self._asn_build_mask(mem)
+        return self.asn_mask
+
+    def _asn_fire(self, mem: torch.Tensor, threshold: torch.Tensor) -> torch.Tensor:
+        if not self.asn_enable or mem.dim() != 4:
+            return self.surrogate_function(mem - threshold)
+
+        mask = self._asn_get_mask(mem)
+        asn_spike = mask * self.surrogate_function(mem - threshold)
+        lateral_source = asn_spike.detach() if self.asn_detach_lateral else asn_spike
+        c = int(mem.shape[1])
+        kernel = self.asn_kernel_base.to(device=mem.device, dtype=mem.dtype).repeat(c, 1, 1, 1)
+        lateral = F.conv2d(lateral_source, kernel, bias=None, stride=1, padding=1, groups=c)
+        non_asn_spike = (1.0 - mask) * self.surrogate_function(mem - self.asn_rho * lateral - threshold)
+        return asn_spike + non_asn_spike
+
+
 # multistep torch version
 class CLIFSpike(nn.Module):
     def __init__(self, tau: float):
@@ -38,17 +100,29 @@ class CLIFSpike(nn.Module):
 
 
 # spikingjelly single step version
-class ComplementaryLIFNeuron(LIFNode_sj):
+class ComplementaryLIFNeuron(ASNFireMixin, LIFNode_sj):
     def __init__(self, tau: float = 2., decay_input: bool = False, v_threshold: float = 1.,
                  v_reset: float = None, surrogate_function: Callable = Rectangle(),
                  detach_reset: bool = False, cupy_fp32_inference=False, **kwargs):
         super().__init__(tau, decay_input, v_threshold, v_reset, surrogate_function, detach_reset, cupy_fp32_inference)
+        self._init_asn(
+            asn_enable=kwargs.get('asn_enable', False),
+            asn_p=kwargs.get('asn_p', 0.5),
+            asn_rho=kwargs.get('asn_rho', 0.5),
+            asn_seed=kwargs.get('asn_seed', 2022),
+            asn_detach_lateral=kwargs.get('asn_detach_lateral', False),
+            layer_index=kwargs.get('layer_index', None),
+        )
         self.register_memory('m', 0.)  # Complementary memory
 
     def forward(self, x: torch.Tensor):
         self.neuronal_charge(x)  # LIF charging
         self.m = self.m * torch.sigmoid(self.v / self.tau)  # Forming
-        spike = self.neuronal_fire()  # LIF fire
+        if self.asn_enable:
+            th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+            spike = self._asn_fire(self.v, th_f)  # LIF fire with ASN
+        else:
+            spike = self.neuronal_fire()  # LIF fire
         self.m += spike  # Strengthen
         self.neuronal_reset(spike)  # LIF reset
         self.v = self.v - spike * torch.sigmoid(self.m)  # Reset
@@ -112,7 +186,7 @@ class ReLU(nn.Module):
         return torch.relu(x)
 
 
-class LSLIFNeuron(nn.Module):
+class LSLIFNeuron(ASNFireMixin, nn.Module):
     """
     LIF variant with an auxiliary history branch.
 
@@ -148,6 +222,11 @@ class LSLIFNeuron(nn.Module):
         history_mode: str = 'all',
         layer_index: Optional[int] = None,
         total_layers: Optional[int] = None,
+        asn_enable: bool = False,
+        asn_p: float = 0.5,
+        asn_rho: float = 0.5,
+        asn_seed: int = 2022,
+        asn_detach_lateral: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -179,8 +258,16 @@ class LSLIFNeuron(nn.Module):
         if self.history_weight_hi <= self.history_weight_lo:
             raise ValueError('history_weight_hi must be larger than history_weight_lo.')
         self.history_power_lo = 0.0
-        self.history_power_hi = 1.0
+        self.history_power_hi = 2.0
         self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
+        self._init_asn(
+            asn_enable=asn_enable,
+            asn_p=asn_p,
+            asn_rho=asn_rho,
+            asn_seed=asn_seed,
+            asn_detach_lateral=asn_detach_lateral,
+            layer_index=self.layer_index,
+        )
 
         def _inv_sigmoid(x: float) -> float:
             x_t = torch.tensor(float(x), dtype=torch.float32).clamp(1e-6, 1.0 - 1e-6)
@@ -275,7 +362,7 @@ class LSLIFNeuron(nn.Module):
         total_mem = m_t + history_term
 
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-        spike = self.surrogate_function(total_mem - th_f)
+        spike = self._asn_fire(total_mem, th_f)
 
         rs = spike.detach() if self.detach_reset else spike
         if self.v_reset is None:
@@ -344,7 +431,7 @@ class LSLIF2Neuron(LSLIFNeuron):
         total_mem = m_t + history_term
 
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-        spike = self.surrogate_function(total_mem - th_f)
+        spike = self._asn_fire(total_mem, th_f)
 
         rs = spike.detach() if self.detach_reset else spike
         if self.v_reset is None:
@@ -413,7 +500,7 @@ class LSCLIFNeuron(LSLIFNeuron):
         # CLIF complementary memory forming/strengthening
         self.m = self.m * torch.sigmoid(v_t / (tau_eff + self.tau_eps))
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-        spike = self.surrogate_function(total_mem - th_f)
+        spike = self._asn_fire(total_mem, th_f)
         self.m = self.m + spike
 
         rs = spike.detach() if self.detach_reset else spike
@@ -431,11 +518,28 @@ class LSCLIFNeuron(LSLIFNeuron):
         return spike.to(dtype=x.dtype)
 
 
-class VanillaLIFNeuron(LIFNode_sj):
+class VanillaLIFNeuron(ASNFireMixin, LIFNode_sj):
     def __init__(self, tau: float = 2., decay_input: bool = False, v_threshold: float = 1.,
                  v_reset: float = None, surrogate_function: Callable = Rectangle(),
                  detach_reset: bool = False, cupy_fp32_inference=False, **kwargs):
         super().__init__(tau, decay_input, v_threshold, v_reset, surrogate_function, detach_reset, cupy_fp32_inference)
+        self._init_asn(
+            asn_enable=kwargs.get('asn_enable', False),
+            asn_p=kwargs.get('asn_p', 0.5),
+            asn_rho=kwargs.get('asn_rho', 0.5),
+            asn_seed=kwargs.get('asn_seed', 2022),
+            asn_detach_lateral=kwargs.get('asn_detach_lateral', False),
+            layer_index=kwargs.get('layer_index', None),
+        )
+
+    def forward(self, x: torch.Tensor):
+        if not self.asn_enable:
+            return super().forward(x)
+        LIFNode_sj.neuronal_charge(self, x)
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+        spike = self._asn_fire(self.v, th_f)
+        LIFNode_sj.neuronal_reset(self, spike)
+        return spike
 
 
 class ZELIFNeuron(VanillaLIFNeuron):
@@ -465,6 +569,7 @@ class ZELIFNeuron(VanillaLIFNeuron):
             surrogate_function=surrogate_function,
             detach_reset=detach_reset,
             cupy_fp32_inference=cupy_fp32_inference,
+            **kwargs,
         )
         self.zelif_alpha = float(zelif_alpha)
         self.zelif_enabled = 1.0 if int(zelif_kernel_size) == 3 else 0.0
@@ -1376,7 +1481,7 @@ class LSPLIFNeuron(LSLIFNeuron):
         total_mem = m_t + history_term
 
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-        spike = self.surrogate_function(total_mem - th_f)
+        spike = self._asn_fire(total_mem, th_f)
 
         rs = spike.detach() if self.detach_reset else spike
         if self.v_reset is None:
