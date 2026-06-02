@@ -351,15 +351,18 @@ def normalize_frames(frame, T: int) -> torch.Tensor:
 def run_sequence(model: torch.nn.Module, recorder: SpikeRecorder, frames: torch.Tensor, mask_prefix: int, device: torch.device):
     functional.reset_net(model)
     recorder.clear()
+    logits = []
     with torch.no_grad():
         for t in range(frames.shape[0]):
             x_t = frames[t].to(device, non_blocking=True)
             if t < mask_prefix:
                 x_t = torch.zeros_like(x_t)
-            _ = model(x_t)
+            out_t = model(x_t)
+            logits.append(out_t.detach().float().cpu())
     outputs = recorder.stacked()
+    logits = torch.stack(logits, dim=0)
     functional.reset_net(model)
-    return outputs
+    return outputs, logits
 
 
 def jaccard_distance(full: torch.Tensor, masked: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
@@ -379,6 +382,57 @@ def update_curve_stats(stats, method: str, layer_key: str, mask_prefix: int, dis
         key = (method, layer_key, mask_prefix, t + 1)
         stats[key]['sum'] += distances[:, t].sum().item()
         stats[key]['count'] += batch_size
+
+
+def update_suffix_performance_stats(
+    stats,
+    method: str,
+    mask_prefix: int,
+    full_logits: torch.Tensor,
+    masked_logits: torch.Tensor,
+    labels: torch.Tensor,
+):
+    # logits: [T, B, num_classes]. Only suffix time steps t > k are used.
+    full_suffix = full_logits[mask_prefix:].sum(dim=0)
+    masked_suffix = masked_logits[mask_prefix:].sum(dim=0)
+    labels = labels.detach().cpu().long()
+
+    full_pred = full_suffix.argmax(dim=1)
+    masked_pred = masked_suffix.argmax(dim=1)
+    full_prob = torch.softmax(full_suffix, dim=1)
+    masked_prob = torch.softmax(masked_suffix, dim=1)
+    sample_idx = torch.arange(labels.numel())
+
+    key = (method, mask_prefix)
+    stats[key]['samples'] += labels.numel()
+    stats[key]['full_correct'] += (full_pred == labels).sum().item()
+    stats[key]['masked_correct'] += (masked_pred == labels).sum().item()
+    stats[key]['full_true_conf_sum'] += full_prob[sample_idx, labels].sum().item()
+    stats[key]['masked_true_conf_sum'] += masked_prob[sample_idx, labels].sum().item()
+    stats[key]['top1_flip_sum'] += (full_pred != masked_pred).sum().item()
+
+
+def performance_rows_from_stats(stats) -> List[dict]:
+    rows = []
+    for (method, mask_prefix), stat in sorted(stats.items(), key=lambda item: (item[0][0], item[0][1])):
+        samples = max(int(stat['samples']), 1)
+        full_acc = stat['full_correct'] / samples
+        masked_acc = stat['masked_correct'] / samples
+        full_conf = stat['full_true_conf_sum'] / samples
+        masked_conf = stat['masked_true_conf_sum'] / samples
+        rows.append({
+            'method': method,
+            'mask_prefix': mask_prefix,
+            'suffix_full_acc': full_acc,
+            'suffix_masked_acc': masked_acc,
+            'suffix_acc_drop': full_acc - masked_acc,
+            'suffix_full_true_conf': full_conf,
+            'suffix_masked_true_conf': masked_conf,
+            'suffix_true_conf_drop': full_conf - masked_conf,
+            'suffix_top1_flip_rate': stat['top1_flip_sum'] / samples,
+            'samples': samples,
+        })
+    return rows
 
 
 def suffix_summary_from_curves(curve_rows: List[dict], mask_prefixes: Iterable[int]) -> List[dict]:
@@ -571,6 +625,14 @@ def main():
     test_loader = build_test_loader(cli.data_dir, cli.T, cli.batch_size, cli.workers)
 
     all_curve_stats = defaultdict(lambda: {'sum': 0.0, 'count': 0})
+    performance_stats = defaultdict(lambda: {
+        'samples': 0,
+        'full_correct': 0,
+        'masked_correct': 0,
+        'full_true_conf_sum': 0.0,
+        'masked_true_conf_sum': 0.0,
+        'top1_flip_sum': 0,
+    })
     layer_names_by_key = {}
     raster_cache = {}
     selected_layer_keys = None
@@ -605,11 +667,12 @@ def main():
         recorder = SpikeRecorder(target_modules)
 
         try:
-            for batch_idx, (frame, _label) in enumerate(test_loader):
+            for batch_idx, (frame, label) in enumerate(test_loader):
                 frames = normalize_frames(frame, cli.T)
-                full_spikes = run_sequence(model, recorder, frames, mask_prefix=0, device=device)
+                full_spikes, full_logits = run_sequence(model, recorder, frames, mask_prefix=0, device=device)
                 for k in cli.mask_prefixes:
-                    masked_spikes = run_sequence(model, recorder, frames, mask_prefix=k, device=device)
+                    masked_spikes, masked_logits = run_sequence(model, recorder, frames, mask_prefix=k, device=device)
+                    update_suffix_performance_stats(performance_stats, method_name, k, full_logits, masked_logits, label)
                     for layer_key in selected_layer_keys:
                         distances = jaccard_distance(full_spikes[layer_key], masked_spikes[layer_key])
                         update_curve_stats(all_curve_stats, method_name, layer_key, k, distances)
@@ -635,6 +698,7 @@ def main():
             'samples': stat['count'],
         })
     summary_rows = suffix_summary_from_curves(curve_rows, cli.mask_prefixes)
+    performance_rows = performance_rows_from_stats(performance_stats)
 
     write_csv(
         out_dir / 'spike_similarity_curves.csv',
@@ -645,6 +709,15 @@ def main():
         out_dir / 'spike_similarity_summary.csv',
         summary_rows,
         ['method', 'layer_key', 'layer_name', 'mask_prefix', 'suffix_jaccard_distance', 'suffix_jaccard_similarity', 'samples_x_time'],
+    )
+    write_csv(
+        out_dir / 'suffix_performance_summary.csv',
+        performance_rows,
+        [
+            'method', 'mask_prefix', 'suffix_full_acc', 'suffix_masked_acc', 'suffix_acc_drop',
+            'suffix_full_true_conf', 'suffix_masked_true_conf', 'suffix_true_conf_drop',
+            'suffix_top1_flip_rate', 'samples'
+        ],
     )
 
     config = {
@@ -659,6 +732,7 @@ def main():
         'mask_type': 'zero',
         'metric': 'jaccard_distance',
         'main_result_scope': 'suffix time steps t > k',
+        'performance_summary': 'suffix_performance_summary.csv',
         'batch_size': cli.batch_size,
         'workers': cli.workers,
         'device': str(device),

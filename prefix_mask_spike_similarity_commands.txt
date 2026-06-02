@@ -4,7 +4,7 @@
 # 1) 这个文件和 neuron_training_commands_by_dataset.txt 一样，只保存可复制运行的命令，不是 shell 脚本。
 # 2) 运行前请把下面命令中的占位路径替换成你的真实路径。
 # 3) 如果实验是 resume 之后继续训练的，可以使用 resume 后日志目录中的 args.txt；只要该 args.txt 与 checkpoint_max.pth 的模型结构、神经元类型和 history/tau 等设置一致即可。
-# 4) 输出包括：spike_similarity_summary.csv、spike_similarity_curves.csv、config.json，以及 figures/similarity_curve.png、layer_heatmap.png、raster_example.png。
+# 4) 输出包括：spike_similarity_summary.csv、spike_similarity_curves.csv、suffix_performance_summary.csv、config.json，以及 figures/similarity_curve.png、layer_heatmap.png、raster_example.png。
 
 ############################################################
 # DVS-CIFAR10: LIF vs LSLIF, VGG11, T=16, k=2/4/8
