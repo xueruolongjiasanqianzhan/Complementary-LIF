@@ -239,13 +239,42 @@ def build_vgg11(args_ns: SimpleNamespace, forced_neuron_model: str, device: torc
     return net.to(device)
 
 
-def load_checkpoint(model: torch.nn.Module, checkpoint_path: Path, device: torch.device):
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+def safe_torch_load(checkpoint_path: Path, device: torch.device):
+    try:
+        return torch.load(checkpoint_path, map_location=device, weights_only=True)
+    except TypeError:
+        # Older PyTorch versions do not support weights_only.
+        return torch.load(checkpoint_path, map_location=device)
+
+
+def get_checkpoint_state(checkpoint_path: Path, device: torch.device):
+    checkpoint = safe_torch_load(checkpoint_path, device)
     state_dict = checkpoint.get('net', checkpoint)
     if any(key.startswith('module.') for key in state_dict):
         state_dict = {key.replace('module.', '', 1): value for key, value in state_dict.items()}
+    return checkpoint, state_dict
+
+
+def sync_args_with_checkpoint_state(args_ns: SimpleNamespace, state_dict: Dict[str, torch.Tensor], neuron_model_name: str):
+    if neuron_model_name != 'LSLIF':
+        return args_ns
+
+    history_weight_keys = [key for key in state_dict if key.endswith('history_weight_raw')]
+    history_power_keys = [key for key in state_dict if key.endswith('history_power_raw')]
+    args_ns.history_learn_weight = bool(history_weight_keys)
+    args_ns.history_learn_power = bool(history_power_keys)
+    if history_weight_keys:
+        first_weight = state_dict[history_weight_keys[0]]
+        args_ns.history_weight_per_step = first_weight.ndim > 0 and first_weight.numel() > 1
+        if args_ns.history_weight_per_step:
+            args_ns.history_max_steps = int(first_weight.numel())
+    else:
+        args_ns.history_weight_per_step = False
+    return args_ns
+
+
+def load_checkpoint(model: torch.nn.Module, state_dict: Dict[str, torch.Tensor]):
     model.load_state_dict(state_dict)
-    return checkpoint
 
 
 def build_test_loader(data_dir: str, T: int, batch_size: int, workers: int) -> DataLoader:
@@ -550,16 +579,21 @@ def main():
     checkpoint_meta = {}
 
     for method_name, checkpoint_path, args_path, neuron_model_name in methods:
+        checkpoint, state_dict = get_checkpoint_state(checkpoint_path, device)
         train_args = load_namespace_args(args_path)
         train_args.T = cli.T
         train_args.b = cli.batch_size
+        train_args = sync_args_with_checkpoint_state(train_args, state_dict, neuron_model_name)
         model = build_vgg11(train_args, neuron_model_name, device)
-        checkpoint = load_checkpoint(model, checkpoint_path, device)
+        load_checkpoint(model, state_dict)
         checkpoint_meta[method_name] = {
             'checkpoint': str(checkpoint_path),
             'args': str(args_path),
             'epoch': checkpoint.get('epoch') if isinstance(checkpoint, dict) else None,
             'max_test_acc': checkpoint.get('max_test_acc') if isinstance(checkpoint, dict) else None,
+            'history_learn_weight': getattr(train_args, 'history_learn_weight', None),
+            'history_weight_per_step': getattr(train_args, 'history_weight_per_step', None),
+            'history_learn_power': getattr(train_args, 'history_learn_power', None),
         }
         model.eval()
 
