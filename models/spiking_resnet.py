@@ -8,7 +8,8 @@ __all__ = [
 def _build_neuron(neuron: callable, kwargs: dict, zelif_kernel_size: int = 3):
     neuron_kwargs = dict(kwargs)
     counter = neuron_kwargs.get('_layer_counter')
-    if neuron_kwargs.get('history_mode', 'all') == 'half' and isinstance(counter, dict):
+    needs_layer_index = neuron_kwargs.get('history_mode', 'all') == 'half' or neuron_kwargs.get('asn_enable', False)
+    if needs_layer_index and isinstance(counter, dict):
         idx = int(counter.get('i', 0))
         total = int(max(1, counter.get('total', 1)))
         neuron_kwargs['layer_index'] = idx

@@ -126,6 +126,11 @@ def main():
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
     parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), ZELIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSCLIF, LSPLIF, CLIF, PLIF, relu')
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
+    parser.add_argument('-asn_enable', action='store_true', help='enable ASN local lateral inhibition on 4D neuron maps')
+    parser.add_argument('-asn_p', type=float, default=0.5, help='for ASN only: Bernoulli probability for ASN-like positions')
+    parser.add_argument('-asn_rho', type=float, default=0.5, help='for ASN only: local lateral inhibition strength')
+    parser.add_argument('-asn_seed', type=int, default=2022, help='for ASN only: deterministic mask seed')
+    parser.add_argument('-asn_detach_lateral', action='store_true', help='for ASN only: detach ASN spikes before forming lateral field')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('--ddp', action='store_true', help='enable DDP training when launched with torchrun')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
@@ -499,6 +504,11 @@ def main():
         history_max_steps=args.T,
         history_learn_power=args.history_learn_power,
         history_mode=args.history_mode,
+        asn_enable=args.asn_enable,
+        asn_p=args.asn_p,
+        asn_rho=args.asn_rho,
+        asn_seed=args.asn_seed,
+        asn_detach_lateral=args.asn_detach_lateral,
     )
     if args.neuron_model == 'ZELIF':
         neuron_kwargs['zelif_alpha'] = args.zelif_alpha
@@ -647,6 +657,15 @@ def main():
             f'历史权重下界{args.history_weight_lo}',
             f'历史权重上界{args.history_weight_hi}',
             f'历史幂次可学习{history_power_can_learn}',
+        ])
+
+    if args.asn_enable:
+        asn_detach = '是' if args.asn_detach_lateral else '否'
+        run_name_parts.extend([
+            f'ASN_p{args.asn_p}',
+            f'ASN_rho{args.asn_rho}',
+            f'ASN_seed{args.asn_seed}',
+            f'ASN侧抑制detach{asn_detach}',
         ])
 
     if args.name:

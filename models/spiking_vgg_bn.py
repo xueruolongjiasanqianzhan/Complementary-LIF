@@ -79,7 +79,7 @@ class SpikingVGGBN(nn.Module):
                 layers.append(nn.AvgPool2d(kernel_size=2, stride=2))
             else:
                 neuron_kwargs = dict(kwargs)
-                if self.history_mode == 'half':
+                if self.history_mode == 'half' or neuron_kwargs.get('asn_enable', False):
                     neuron_kwargs['layer_index'] = self.layer_index
                     neuron_kwargs['total_layers'] = self.total_neuron_layers
                 layers.append(nn.Conv2d(self.init_channels, x, kernel_size=3, padding=1, bias=self.whether_bias))
