@@ -1,0 +1,85 @@
+# Early-cue + late-noise 干扰实验命令
+#
+# 说明：
+# 1) 该实验不训练，直接加载已有 checkpoint_max.pth 和 args.txt。
+# 2) 输入序列总共 T=16；默认前 4 个时间步保留 CIFAR10-DVS 原始帧，后 12 个时间步替换为随机干扰。
+# 3) 每个 --run 后面依次是：显示名称 神经元模型 checkpoint_max.pth args.txt。
+# 4) 输出包括：early_cue_noise_summary.csv、config.json，以及 figures/early_cue_noise_accuracy.png、early_cue_noise_accuracy_drop.png。
+
+############################################################
+# DVS-CIFAR10: 六种神经元 early-cue + late-noise 对比，VGG11, T=16, 前4步真实，后12步随机干扰
+############################################################
+
+python analysis/early_cue_noise_interference_eval.py \
+  --run LIF LIF /path/to/lif_log/checkpoint_max.pth /path/to/lif_log/args.txt \
+  --run LSLIF LSLIF /path/to/lslif_log/checkpoint_max.pth /path/to/lslif_log/args.txt \
+  --run CLIF CLIF /path/to/clif_log/checkpoint_max.pth /path/to/clif_log/args.txt \
+  --run LSCLIF LSCLIF /path/to/lsclif_log/checkpoint_max.pth /path/to/lsclif_log/args.txt \
+  --run PLIF PLIF /path/to/plif_log/checkpoint_max.pth /path/to/plif_log/args.txt \
+  --run LSPLIF LSPLIF /path/to/lsplif_log/checkpoint_max.pth /path/to/lsplif_log/args.txt \
+  --data-dir /path/to/DVS-CIFAR10 \
+  --out-dir analysis_results/early_cue_noise_interference \
+  --T 16 \
+  --cue-steps 4 \
+  --noise-type bernoulli \
+  --event-prob 0.10 \
+  --batch-size 16 \
+  --workers 0
+
+############################################################
+# 可选：使用 uniform 随机干扰替换后12个时间步
+############################################################
+
+python analysis/early_cue_noise_interference_eval.py \
+  --run LIF LIF /path/to/lif_log/checkpoint_max.pth /path/to/lif_log/args.txt \
+  --run LSLIF LSLIF /path/to/lslif_log/checkpoint_max.pth /path/to/lslif_log/args.txt \
+  --run CLIF CLIF /path/to/clif_log/checkpoint_max.pth /path/to/clif_log/args.txt \
+  --run LSCLIF LSCLIF /path/to/lsclif_log/checkpoint_max.pth /path/to/lsclif_log/args.txt \
+  --run PLIF PLIF /path/to/plif_log/checkpoint_max.pth /path/to/plif_log/args.txt \
+  --run LSPLIF LSPLIF /path/to/lsplif_log/checkpoint_max.pth /path/to/lsplif_log/args.txt \
+  --data-dir /path/to/DVS-CIFAR10 \
+  --out-dir analysis_results/early_cue_uniform_noise_interference \
+  --T 16 \
+  --cue-steps 4 \
+  --noise-type uniform \
+  --batch-size 16 \
+  --workers 0
+
+############################################################
+# 可选：使用同 batch 其他样本的后12个时间步作为真实 DVS-like 干扰
+############################################################
+
+python analysis/early_cue_noise_interference_eval.py \
+  --run LIF LIF /path/to/lif_log/checkpoint_max.pth /path/to/lif_log/args.txt \
+  --run LSLIF LSLIF /path/to/lslif_log/checkpoint_max.pth /path/to/lslif_log/args.txt \
+  --run CLIF CLIF /path/to/clif_log/checkpoint_max.pth /path/to/clif_log/args.txt \
+  --run LSCLIF LSCLIF /path/to/lsclif_log/checkpoint_max.pth /path/to/lsclif_log/args.txt \
+  --run PLIF PLIF /path/to/plif_log/checkpoint_max.pth /path/to/plif_log/args.txt \
+  --run LSPLIF LSPLIF /path/to/lsplif_log/checkpoint_max.pth /path/to/lsplif_log/args.txt \
+  --data-dir /path/to/DVS-CIFAR10 \
+  --out-dir analysis_results/early_cue_shuffle_suffix_interference \
+  --T 16 \
+  --cue-steps 4 \
+  --noise-type shuffle_batch \
+  --batch-size 16 \
+  --workers 0
+
+############################################################
+# 可选：清空第 5-8 和第 13-16 个时间步，其余时间步保留原始 DVS 输入
+############################################################
+
+python analysis/early_cue_noise_interference_eval.py \
+  --run LIF LIF /path/to/lif_log/checkpoint_max.pth /path/to/lif_log/args.txt \
+  --run LSLIF LSLIF /path/to/lslif_log/checkpoint_max.pth /path/to/lslif_log/args.txt \
+  --run CLIF CLIF /path/to/clif_log/checkpoint_max.pth /path/to/clif_log/args.txt \
+  --run LSCLIF LSCLIF /path/to/lsclif_log/checkpoint_max.pth /path/to/lsclif_log/args.txt \
+  --run PLIF PLIF /path/to/plif_log/checkpoint_max.pth /path/to/plif_log/args.txt \
+  --run LSPLIF LSPLIF /path/to/lsplif_log/checkpoint_max.pth /path/to/lsplif_log/args.txt \
+  --data-dir /path/to/DVS-CIFAR10 \
+  --out-dir analysis_results/early_cue_zero_blocks_interference \
+  --T 16 \
+  --cue-steps 4 \
+  --noise-type zero_blocks \
+  --zero-ranges 5-8 13-16 \
+  --batch-size 16 \
+  --workers 0
