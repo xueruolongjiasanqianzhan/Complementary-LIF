@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Evaluate trained DVS-CIFAR10 VGG11 models with early real frames and late noise.
 
-The experiment keeps the first ``cue_steps`` frames from each DVS-CIFAR10 test
-sequence and replaces the remaining frames with deterministic random
-interference. It loads trained checkpoints only; no training is performed.
+The experiment can either keep the first ``cue_steps`` frames from each
+DVS-CIFAR10 test sequence and replace the remaining frames with deterministic
+interference, or clear user-specified temporal blocks. It loads trained
+checkpoints only; no training is performed.
 """
 
 import argparse
@@ -49,11 +50,19 @@ def make_interference_frames(
     generator: torch.Generator,
     event_prob: float,
     gaussian_std: float,
+    zero_ranges: List[Tuple[int, int]],
 ) -> torch.Tensor:
-    """Return [T, B, C, H, W] sequence with suffix replaced by random noise."""
+    """Return [T, B, C, H, W] sequence with configured interference."""
     if cue_steps < 0 or cue_steps > frames.shape[0]:
         raise ValueError(f'cue_steps must be in [0, T], got cue_steps={cue_steps}, T={frames.shape[0]}')
     corrupted = frames.clone()
+    if noise_type == 'zero_blocks':
+        for start, end in zero_ranges:
+            if start < 1 or end > frames.shape[0] or start > end:
+                raise ValueError(f'Invalid 1-based zero range {start}-{end} for T={frames.shape[0]}')
+            corrupted[start - 1:end] = 0
+        return corrupted
+
     if cue_steps == frames.shape[0]:
         return corrupted
 
@@ -77,6 +86,18 @@ def make_interference_frames(
         raise ValueError(f'Unsupported noise type: {noise_type}')
     corrupted[cue_steps:] = noise
     return corrupted
+
+
+def parse_zero_ranges(range_texts: List[str]) -> List[Tuple[int, int]]:
+    ranges = []
+    for text in range_texts:
+        if '-' not in text:
+            raise ValueError(f'Expected zero range formatted as START-END, got {text}')
+        start_text, end_text = text.split('-', 1)
+        start = int(start_text)
+        end = int(end_text)
+        ranges.append((start, end))
+    return ranges
 
 
 def logits_to_metrics(logits: torch.Tensor, labels: torch.Tensor) -> Dict[str, float]:
@@ -164,7 +185,7 @@ def plot_drop(rows: List[dict], out_path: Path):
     ax.set_xticks(x)
     ax.set_xticklabels(methods)
     ax.set_ylabel('Accuracy drop')
-    ax.set_title('Accuracy drop under late random interference')
+    ax.set_title('Accuracy drop under configured temporal interference')
     ax.grid(True, axis='y', alpha=0.3)
     ax.legend(fontsize=8)
     fig.tight_layout()
@@ -189,9 +210,15 @@ def parse_args():
     parser.add_argument('--out-dir', required=True, help='Required output directory for CSV/JSON/figures.')
     parser.add_argument('--T', type=int, default=16, help='Total time steps.')
     parser.add_argument('--cue-steps', type=int, default=4, help='Number of initial real DVS frames kept before noise suffix.')
-    parser.add_argument('--noise-type', choices=['uniform', 'bernoulli', 'gaussian', 'shuffle_batch'], default='bernoulli')
+    parser.add_argument('--noise-type', choices=['uniform', 'bernoulli', 'gaussian', 'shuffle_batch', 'zero_blocks'], default='bernoulli')
     parser.add_argument('--event-prob', type=float, default=0.10, help='Event probability for bernoulli noise.')
     parser.add_argument('--gaussian-std', type=float, default=0.20, help='Std for clipped gaussian noise.')
+    parser.add_argument(
+        '--zero-ranges',
+        nargs='+',
+        default=['5-8', '13-16'],
+        help='1-based inclusive ranges to clear when --noise-type zero_blocks, e.g. 5-8 13-16.',
+    )
     parser.add_argument('--batch-size', type=int, default=16)
     parser.add_argument('--workers', type=int, default=0)
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
@@ -203,6 +230,7 @@ def main():
     cli = parse_args()
     if cli.cue_steps <= 0 or cli.cue_steps >= cli.T:
         raise ValueError(f'cue_steps must satisfy 0 < cue_steps < T. Got cue_steps={cli.cue_steps}, T={cli.T}')
+    zero_ranges = parse_zero_ranges(cli.zero_ranges)
     random.seed(cli.seed)
     np.random.seed(cli.seed)
     torch.manual_seed(cli.seed)
@@ -261,6 +289,7 @@ def main():
                 generator=noise_generator,
                 event_prob=cli.event_prob,
                 gaussian_std=cli.gaussian_std,
+                zero_ranges=zero_ranges,
             )
             _clean_spikes, clean_logits = run_sequence(model, recorder=NullRecorder(), frames=frames, mask_prefix=0, device=device)
             _noise_spikes, noise_logits = run_sequence(model, recorder=NullRecorder(), frames=noisy_frames, mask_prefix=0, device=device)
@@ -316,6 +345,7 @@ def main():
         'noise_type': cli.noise_type,
         'event_prob': cli.event_prob,
         'gaussian_std': cli.gaussian_std,
+        'zero_ranges': cli.zero_ranges,
         'batch_size': cli.batch_size,
         'workers': cli.workers,
         'device': str(device),

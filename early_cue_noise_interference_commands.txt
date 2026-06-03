@@ -63,3 +63,23 @@ python analysis/early_cue_noise_interference_eval.py \
   --noise-type shuffle_batch \
   --batch-size 16 \
   --workers 0
+
+############################################################
+# 可选：清空第 5-8 和第 13-16 个时间步，其余时间步保留原始 DVS 输入
+############################################################
+
+python analysis/early_cue_noise_interference_eval.py \
+  --run LIF LIF /path/to/lif_log/checkpoint_max.pth /path/to/lif_log/args.txt \
+  --run LSLIF LSLIF /path/to/lslif_log/checkpoint_max.pth /path/to/lslif_log/args.txt \
+  --run CLIF CLIF /path/to/clif_log/checkpoint_max.pth /path/to/clif_log/args.txt \
+  --run LSCLIF LSCLIF /path/to/lsclif_log/checkpoint_max.pth /path/to/lsclif_log/args.txt \
+  --run PLIF PLIF /path/to/plif_log/checkpoint_max.pth /path/to/plif_log/args.txt \
+  --run LSPLIF LSPLIF /path/to/lsplif_log/checkpoint_max.pth /path/to/lsplif_log/args.txt \
+  --data-dir /path/to/DVS-CIFAR10 \
+  --out-dir analysis_results/early_cue_zero_blocks_interference \
+  --T 16 \
+  --cue-steps 4 \
+  --noise-type zero_blocks \
+  --zero-ranges 5-8 13-16 \
+  --batch-size 16 \
+  --workers 0
