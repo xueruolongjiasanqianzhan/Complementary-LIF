@@ -140,9 +140,8 @@ def plot_accuracy(rows: List[dict], out_path: Path):
     methods = [row['method'] for row in rows]
     metrics = [
         ('clean_all_acc', 'Clean all-steps acc'),
-        ('noise_all_acc', 'Early-cue + noise all-steps acc'),
-        ('noise_late_acc', 'Late-noise readout acc'),
-        ('noise_cue_acc', 'Cue-only readout acc'),
+        ('noise_all_acc', 'Interference all-steps acc'),
+        ('noise_late_acc', 'Interference suffix readout acc'),
     ]
     x = np.arange(len(methods))
     width = 0.8 / len(metrics)
@@ -159,7 +158,7 @@ def plot_accuracy(rows: List[dict], out_path: Path):
     ax.set_ylim(0.0, min(1.05, max([float(row[key]) for row in rows for key, _ in metrics] + [0.1]) + 0.12))
     ax.set_title('Early real DVS frames followed by random interference')
     ax.grid(True, axis='y', alpha=0.3)
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=7, loc='upper left', bbox_to_anchor=(1.01, 1.0), borderaxespad=0.0)
     fig.tight_layout()
     fig.savefig(out_path, dpi=220, bbox_inches='tight')
     plt.close(fig)
@@ -187,7 +186,7 @@ def plot_drop(rows: List[dict], out_path: Path):
     ax.set_ylabel('Accuracy drop')
     ax.set_title('Accuracy drop under configured temporal interference')
     ax.grid(True, axis='y', alpha=0.3)
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=7, loc='upper left', bbox_to_anchor=(1.01, 1.0), borderaxespad=0.0)
     fig.tight_layout()
     fig.savefig(out_path, dpi=220, bbox_inches='tight')
     plt.close(fig)
