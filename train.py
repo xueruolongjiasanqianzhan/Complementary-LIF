@@ -124,7 +124,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), ZELIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSCLIF, LSPLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), ZELIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSCLIF, LSPLIF, RCMLIF, CLIF, PLIF, relu')
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
     parser.add_argument('-asn_enable', action='store_true', help='enable ASN local lateral inhibition on 4D neuron maps')
     parser.add_argument('-asn_p', type=float, default=0.5, help='for ASN only: Bernoulli probability for ASN-like positions')
@@ -155,6 +155,16 @@ def main():
     parser.add_argument('-history_weight_per_step', action='store_true', help='for LSLIF only: use one learnable history_weight per time-step')
     parser.add_argument('-history_learn_power', action='store_true', help='for LSLIF only: make history_power learnable')
     parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike', 'half'], help='for LSLIF only: history mode (all, post_spike, or half: shallow post_spike and deep all)')
+    parser.add_argument('-rcm_reset', type=str, default='hard', choices=['hard', 'soft'], help='for RCMLIF only: main membrane reset type; hard uses rcm_v_reset, soft subtracts threshold')
+    parser.add_argument('-rcm_v_reset', type=float, default=0.0, help='for RCMLIF only: hard-reset membrane value')
+    parser.add_argument('-rcm_lambda', type=float, default=0.5, help='for RCMLIF only: reset-loss memory decay lambda_r')
+    parser.add_argument('-rcm_eta', type=float, default=1.0, help='for RCMLIF only: reset-loss memory update coefficient eta')
+    parser.add_argument('-rcm_beta', type=float, default=1.0, help='for RCMLIF only: reset-loss compensation coefficient beta')
+    parser.add_argument('-rcm_learn_eta', action='store_true', help='for RCMLIF only: make eta learnable')
+    parser.add_argument('-rcm_learn_beta', action='store_true', help='for RCMLIF only: make beta learnable')
+    parser.add_argument('-rcm_phi', type=str, default='tanh', choices=['tanh', 'identity', 'time_norm'], help='for RCMLIF only: transform applied to reset-loss memory before compensation')
+    parser.add_argument('-rcm_power', type=float, default=1.0, help='for RCMLIF only: time normalization power when rcm_phi=time_norm')
+    parser.add_argument('-rcm_eps', type=float, default=1e-6, help='for RCMLIF only: epsilon for time normalization')
     parser.add_argument('-dtlif_dt', type=float, default=1.0, help='for DTLIF only: time-step size used in rho update')
     parser.add_argument('-dtlif_a', type=float, default=0.1, help='for DTLIF only: retention boost coefficient when membrane is low')
     parser.add_argument('-dtlif_b', type=float, default=0.1, help='for DTLIF only: leakage boost coefficient when membrane is high')
@@ -444,6 +454,8 @@ def main():
         neuron_model = neuron.LSCLIFNeuron
     elif args.neuron_model == 'LSPLIF':
         neuron_model = neuron.LSPLIFNeuron
+    elif args.neuron_model == 'RCMLIF':
+        neuron_model = neuron.RCMLIFNeuron
     elif args.neuron_model == 'CLIF':
         neuron_model = neuron.ComplementaryLIFNeuron
     elif args.neuron_model == 'PLIF':
@@ -504,6 +516,14 @@ def main():
         history_max_steps=args.T,
         history_learn_power=args.history_learn_power,
         history_mode=args.history_mode,
+        rcm_lambda=args.rcm_lambda,
+        rcm_eta=args.rcm_eta,
+        rcm_beta=args.rcm_beta,
+        rcm_learn_eta=args.rcm_learn_eta,
+        rcm_learn_beta=args.rcm_learn_beta,
+        rcm_phi=args.rcm_phi,
+        rcm_power=args.rcm_power,
+        rcm_eps=args.rcm_eps,
         asn_enable=args.asn_enable,
         asn_p=args.asn_p,
         asn_rho=args.asn_rho,
@@ -512,6 +532,8 @@ def main():
     )
     if args.neuron_model == 'ZELIF':
         neuron_kwargs['zelif_alpha'] = args.zelif_alpha
+    if args.neuron_model == 'RCMLIF':
+        neuron_kwargs['v_reset'] = None if args.rcm_reset == 'soft' else args.rcm_v_reset
 
     if args.model in ['spiking_resnet18', 'spiking_resnet34', 'spiking_resnet50', 'spiking_resnet101', 'spiking_resnet152']:
         net = spiking_resnet.__dict__[args.model](neuron=neuron_model, num_classes=num_classes,
@@ -642,6 +664,20 @@ def main():
             f'lifdgn_g0可学习{g0_can_learn}',
             f'lifdgn_c可学习{c_can_learn}',
             f'lifdgn_gmax{args.lifdgn_g_max}',
+        ])
+    elif args.neuron_model == 'RCMLIF':
+        eta_can_learn = '是' if args.rcm_learn_eta else '否'
+        beta_can_learn = '是' if args.rcm_learn_beta else '否'
+        run_name_parts.extend([
+            f'rcm_reset{args.rcm_reset}',
+            f'rcm_vreset{args.rcm_v_reset}',
+            f'rcm_lambda{args.rcm_lambda}',
+            f'rcm_eta{args.rcm_eta}',
+            f'rcm_beta{args.rcm_beta}',
+            f'rcm_eta可学习{eta_can_learn}',
+            f'rcm_beta可学习{beta_can_learn}',
+            f'rcm_phi{args.rcm_phi}',
+            f'rcm_power{args.rcm_power}',
         ])
     if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSCLIF', 'LSPLIF']:
         history_weight_can_learn = '是' if args.history_learn_weight else '否'

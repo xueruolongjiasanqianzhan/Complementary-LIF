@@ -518,6 +518,160 @@ class LSCLIFNeuron(LSLIFNeuron):
         return spike.to(dtype=x.dtype)
 
 
+class RCMLIFNeuron(ASNFireMixin, nn.Module):
+    """
+    Reset-Compensated Memory LIF neuron.
+
+    The main membrane ``v`` performs standard LIF charging, firing, and reset.
+    The auxiliary state ``r`` does not integrate the current input. Instead, it
+    stores reset-induced membrane loss:
+
+      r_t = lambda_r * r_{t-1} + eta * Delta_t
+
+    The previous reset-loss memory is added before firing:
+
+      M_t = v_t^pre + beta * phi(r_{t-1})
+
+    so RCMLIF preserves a trajectory of reset losses rather than the input
+    history stored by LSLIF's ``n`` branch.
+    """
+
+    def __init__(
+        self,
+        tau: float = 2.0,
+        decay_input: bool = False,
+        v_threshold: float = 1.0,
+        v_reset: Optional[float] = 0.0,
+        surrogate_function: Optional[Callable] = None,
+        detach_reset: bool = False,
+        tau_eps: float = 1e-6,
+        rcm_lambda: float = 0.5,
+        rcm_eta: float = 1.0,
+        rcm_beta: float = 1.0,
+        rcm_learn_eta: bool = False,
+        rcm_learn_beta: bool = False,
+        rcm_phi: str = 'tanh',
+        rcm_power: float = 1.0,
+        rcm_eps: float = 1e-6,
+        layer_index: Optional[int] = None,
+        asn_enable: bool = False,
+        asn_p: float = 0.5,
+        asn_rho: float = 0.5,
+        asn_seed: int = 2022,
+        asn_detach_lateral: bool = False,
+        **kwargs,
+    ):
+        super().__init__()
+        self.tau = float(tau)
+        self.decay_input = bool(decay_input)
+        self.v_threshold = float(v_threshold)
+        self.v_reset = v_reset
+        self.detach_reset = bool(detach_reset)
+        self.tau_eps = float(tau_eps)
+        self.rcm_lambda = float(rcm_lambda)
+        if not 0.0 <= self.rcm_lambda <= 1.0:
+            raise ValueError('rcm_lambda must be in [0, 1].')
+        self.rcm_eta = float(rcm_eta)
+        self.rcm_beta = float(rcm_beta)
+        self.rcm_learn_eta = bool(rcm_learn_eta)
+        self.rcm_learn_beta = bool(rcm_learn_beta)
+        self.rcm_phi = str(rcm_phi).lower()
+        if self.rcm_phi not in {'tanh', 'identity', 'time_norm'}:
+            raise ValueError("Unsupported rcm_phi. Expected 'tanh', 'identity', or 'time_norm'.")
+        self.rcm_power = float(rcm_power)
+        self.rcm_eps = float(rcm_eps)
+        self.layer_index = int(layer_index) if layer_index is not None else None
+        self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
+        self._init_asn(
+            asn_enable=asn_enable,
+            asn_p=asn_p,
+            asn_rho=asn_rho,
+            asn_seed=asn_seed,
+            asn_detach_lateral=asn_detach_lateral,
+            layer_index=self.layer_index,
+        )
+
+        if self.rcm_learn_eta:
+            self.rcm_eta_param = nn.Parameter(torch.tensor(self.rcm_eta, dtype=torch.float32))
+        if self.rcm_learn_beta:
+            self.rcm_beta_param = nn.Parameter(torch.tensor(self.rcm_beta, dtype=torch.float32))
+
+        self.v = None
+        self.r = None
+        self.step_count = 0
+
+    def reset(self):
+        self.v = None
+        self.r = None
+        self.step_count = 0
+
+    def _ensure_state(self, x: torch.Tensor):
+        need_init = (
+            self.v is None
+            or self.r is None
+            or self.v.shape != x.shape
+            or self.r.shape != x.shape
+            or self.v.device != x.device
+            or self.r.device != x.device
+        )
+        if need_init:
+            self.v = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.r = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.step_count = 0
+
+    def _get_rcm_eta(self, dtype: torch.dtype, device: torch.device):
+        if self.rcm_learn_eta:
+            return self.rcm_eta_param.to(dtype=dtype, device=device)
+        return torch.as_tensor(self.rcm_eta, dtype=dtype, device=device)
+
+    def _get_rcm_beta(self, dtype: torch.dtype, device: torch.device):
+        if self.rcm_learn_beta:
+            return self.rcm_beta_param.to(dtype=dtype, device=device)
+        return torch.as_tensor(self.rcm_beta, dtype=dtype, device=device)
+
+    def _rcm_transform(self, r: torch.Tensor, step_count: int) -> torch.Tensor:
+        if self.rcm_phi == 'tanh':
+            return torch.tanh(r)
+        if self.rcm_phi == 'identity':
+            return r
+        step_t = torch.as_tensor(float(step_count), device=r.device, dtype=r.dtype)
+        norm = torch.pow(step_t + self.rcm_eps, self.rcm_power)
+        return r / norm
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+
+        tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
+        if self.decay_input:
+            m_t = self.v + (x_f - self.v) / (tau_eff + self.tau_eps)
+        else:
+            decay = 1.0 - 1.0 / (tau_eff + self.tau_eps)
+            decay = torch.clamp(decay, 0.0, 1.0)
+            m_t = self.v * decay + x_f
+
+        self.step_count += 1
+        beta = self._get_rcm_beta(dtype=m_t.dtype, device=m_t.device)
+        total_mem = m_t + beta * self._rcm_transform(self.r, self.step_count)
+
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+        spike = self._asn_fire(total_mem, th_f)
+
+        rs = spike.detach() if self.detach_reset else spike
+        if self.v_reset is None:
+            v_next = m_t - rs * th_f
+        else:
+            v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
+            v_next = torch.where(rs.bool(), v_reset_t, m_t)
+
+        reset_loss = m_t - v_next
+        eta = self._get_rcm_eta(dtype=m_t.dtype, device=m_t.device)
+        lambda_r = torch.as_tensor(self.rcm_lambda, dtype=m_t.dtype, device=m_t.device)
+        self.r = lambda_r * self.r + eta * reset_loss
+        self.v = v_next
+        return spike.to(dtype=x.dtype)
+
+
 class VanillaLIFNeuron(ASNFireMixin, LIFNode_sj):
     def __init__(self, tau: float = 2., decay_input: bool = False, v_threshold: float = 1.,
                  v_reset: float = None, surrogate_function: Callable = Rectangle(),
