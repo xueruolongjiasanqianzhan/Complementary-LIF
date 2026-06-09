@@ -132,17 +132,17 @@ def main():
     parser.add_argument('-tau_learn_alpha', action='store_true', help='for newLIF only: make alpha learnable')
     parser.add_argument('-tau_alpha_share', action='store_true', help='for newLIF only: share alpha_up and alpha_down')
     parser.add_argument('-tau_learn_eta', action='store_true', help='for newLIFTauDep/newCLIF only: make eta learnable')
-    parser.add_argument('-history_weight', type=float, default=1.0, help='for LSLIF only: auxiliary history branch weight')
-    parser.add_argument('-history_power', type=float, default=1.0, help='for LSLIF only: normalization power for history branch')
-    parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF only: epsilon for history normalization')
-    parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF only: make history_weight learnable')
-    parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike'], help='for LSLIF only: when to add history branch (all steps or only after neuron has fired)')
-    parser.add_argument('-tlif_lambda', type=float, default=0.5, help='for TLIF only: membrane retention ratio around dynamic lower bound')
-    parser.add_argument('-tlif_theta', type=float, default=None, help='for TLIF only: base threshold step; defaults to v_threshold')
-    parser.add_argument('-tlif_alpha', type=float, default=0.5, help='for TLIF only: learnable initial scale for dynamic threshold interval delta')
-    parser.add_argument('-tlif_w', type=float, default=1.0, help='for TLIF only: learnable initial weight for non-reset membrane in delta')
-    parser.add_argument('-tlif_b', type=float, default=0.0, help='for TLIF only: learnable initial bias for dynamic threshold interval delta')
-    parser.add_argument('-tlif_min_interval', type=float, default=1e-3, help='for TLIF only: lower bound that enforces theta + delta > 0')
+    parser.add_argument('-history_weight', type=float, default=1.0, help='for LSLIF/TLIF only: auxiliary non-reset V branch weight')
+    parser.add_argument('-history_power', type=float, default=1.0, help='for LSLIF/TLIF only: normalization power for non-reset V branch')
+    parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF/TLIF only: epsilon for history normalization')
+    parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF/TLIF only: make history_weight learnable')
+    parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike'], help='for LSLIF/TLIF only: when to use the non-reset V branch (all steps or only after neuron has fired)')
+    parser.add_argument('-tlif_lambda', type=float, default=0.5, help='for TLIF only: membrane retention ratio around the previous threshold lower bound')
+    parser.add_argument('-tlif_theta', type=float, default=None, help='for TLIF only: base threshold interval; defaults to v_threshold')
+    parser.add_argument('-tlif_alpha', type=float, default=0.5, help='deprecated for TLIF: ignored by the LSLIF-aligned implementation')
+    parser.add_argument('-tlif_w', type=float, default=1.0, help='deprecated for TLIF: ignored by the LSLIF-aligned implementation')
+    parser.add_argument('-tlif_b', type=float, default=0.0, help='deprecated for TLIF: ignored by the LSLIF-aligned implementation')
+    parser.add_argument('-tlif_min_interval', type=float, default=1e-3, help='for TLIF only: lower bound for theta - normalized V threshold drop')
     parser.add_argument('-rcm_reset', type=str, default='hard', choices=['hard', 'soft'], help='for RCMLIF only: main membrane reset type; hard uses rcm_v_reset, soft subtracts threshold')
     parser.add_argument('-rcm_v_reset', type=float, default=0.0, help='for RCMLIF only: hard-reset membrane value')
     parser.add_argument('-rcm_lambda', type=float, default=0.5, help='for RCMLIF only: reset-loss memory decay lambda_r')
@@ -561,8 +561,10 @@ def main():
 
     if args.neuron_model != 'LIF':
         out_dir += f'_{args.neuron_model}_'
-    if args.neuron_model in ['LSLIF', 'LSLIF2']:
+    if args.neuron_model in ['LSLIF', 'LSLIF2', 'TLIF']:
         out_dir += f'_hw{args.history_weight}_hp{args.history_power}_he{args.history_eps}_hm{args.history_mode}_hlw{int(args.history_learn_weight)}'
+        if args.neuron_model == 'TLIF':
+            out_dir += f'_tl{args.tlif_lambda}_tt{args.tlif_theta}_tmin{args.tlif_min_interval}'
     elif args.neuron_model == 'RCMLIF':
         out_dir += (
             f'_rr{args.rcm_reset}_rv{args.rcm_v_reset}_rl{args.rcm_lambda}'

@@ -518,25 +518,29 @@ class LSCLIFNeuron(LSLIFNeuron):
         return spike.to(dtype=x.dtype)
 
 
-class ThresholdLadderLIFNeuron(ASNFireMixin, nn.Module):
+class ThresholdLadderLIFNeuron(LSLIFNeuron):
     """
-    Threshold-Ladder LIF neuron with a non-reset membrane and dynamic threshold interval.
+    Threshold-modulated LIF with a single membrane state.
 
-    The state ``v`` stores the non-reset membrane potential V_t. The membrane leaks
-    toward a dynamic lower bound B_t instead of zero:
+    TLIF keeps one membrane ``v``. The same membrane is used both for firing and
+    for computing the post-spike threshold interval adjustment. Between spikes,
+    it leaks toward the previous threshold lower bound ``B_t``:
 
       V_t = B_t + lambda * (V_{t-1} - B_t) + I_t
+      s_t = H(V_t - Theta_t)
 
-    A spike is emitted when V_t crosses the dynamic threshold Theta_t. After a spike,
-    V_t is not reset. Instead, the threshold ladder is advanced by setting the next
-    lower bound to the old threshold and adapting the next interval with the absolute
-    non-reset membrane:
+    When the neuron spikes, the threshold ladder advances. The interval update
+    uses an LSLIF-style time-normalized value from ``V_t`` itself, not a
+    difference such as ``V_t - B_t`` or ``V_t - Theta_t``:
 
-      Delta_t = alpha_theta * tanh(w_theta * V_t + b)
+      A_t = beta * V_t / (step_t + eps)^power
+      D_t = clamp(theta - A_t, min_interval)
       B_{t+1} = (1 - s_t) * B_t + s_t * Theta_t
-      Theta_{t+1} = (1 - s_t) * Theta_t + s_t * (Theta_t + theta + Delta_t)
+      Theta_{t+1} = (1 - s_t) * Theta_t + s_t * (Theta_t + D_t)
 
-    The effective post-spike threshold interval is clamped to remain positive.
+    Thus the LSLIF-like branch acts as a threshold-drop term for the next
+    threshold interval while the membrane itself remains a single non-reset
+    state with a dynamic decay lower bound.
     """
 
     def __init__(
@@ -547,6 +551,17 @@ class ThresholdLadderLIFNeuron(ASNFireMixin, nn.Module):
         v_reset: Optional[float] = None,
         surrogate_function: Optional[Callable] = None,
         detach_reset: bool = False,
+        tau_eps: float = 1e-6,
+        history_weight: float = 1.0,
+        history_power: float = 1.0,
+        history_eps: float = 1e-6,
+        history_learn_weight: bool = False,
+        history_weight_lo: float = -0.8,
+        history_weight_hi: float = 0.8,
+        history_weight_per_step: bool = False,
+        history_max_steps: int = 16,
+        history_learn_power: bool = False,
+        history_mode: str = 'all',
         tlif_lambda: float = 0.5,
         tlif_theta: Optional[float] = None,
         tlif_alpha: float = 0.5,
@@ -554,6 +569,7 @@ class ThresholdLadderLIFNeuron(ASNFireMixin, nn.Module):
         tlif_b: float = 0.0,
         tlif_min_interval: float = 1e-3,
         layer_index: Optional[int] = None,
+        total_layers: Optional[int] = None,
         asn_enable: bool = False,
         asn_p: float = 0.5,
         asn_rho: float = 0.5,
@@ -561,12 +577,33 @@ class ThresholdLadderLIFNeuron(ASNFireMixin, nn.Module):
         asn_detach_lateral: bool = False,
         **kwargs,
     ):
-        super().__init__()
-        self.tau = float(tau)
-        self.decay_input = bool(decay_input)
-        self.v_threshold = float(v_threshold)
-        self.v_reset = v_reset
-        self.detach_reset = bool(detach_reset)
+        super().__init__(
+            tau=tau,
+            decay_input=decay_input,
+            v_threshold=v_threshold,
+            v_reset=v_reset,
+            surrogate_function=surrogate_function,
+            detach_reset=detach_reset,
+            tau_eps=tau_eps,
+            history_weight=history_weight,
+            history_power=history_power,
+            history_eps=history_eps,
+            history_learn_weight=history_learn_weight,
+            history_weight_lo=history_weight_lo,
+            history_weight_hi=history_weight_hi,
+            history_weight_per_step=history_weight_per_step,
+            history_max_steps=history_max_steps,
+            history_learn_power=history_learn_power,
+            history_mode=history_mode,
+            layer_index=layer_index,
+            total_layers=total_layers,
+            asn_enable=asn_enable,
+            asn_p=asn_p,
+            asn_rho=asn_rho,
+            asn_seed=asn_seed,
+            asn_detach_lateral=asn_detach_lateral,
+            **kwargs,
+        )
         self.tlif_lambda = float(tlif_lambda)
         if not 0.0 <= self.tlif_lambda <= 1.0:
             raise ValueError('tlif_lambda must be in [0, 1].')
@@ -576,22 +613,11 @@ class ThresholdLadderLIFNeuron(ASNFireMixin, nn.Module):
         self.tlif_min_interval = float(tlif_min_interval)
         if self.tlif_min_interval <= 0.0:
             raise ValueError('tlif_min_interval must be positive.')
-        self.layer_index = int(layer_index) if layer_index is not None else None
-        self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
-        self._init_asn(
-            asn_enable=asn_enable,
-            asn_p=asn_p,
-            asn_rho=asn_rho,
-            asn_seed=asn_seed,
-            asn_detach_lateral=asn_detach_lateral,
-            layer_index=self.layer_index,
-        )
-
-        self.tlif_alpha_param = nn.Parameter(torch.tensor(float(tlif_alpha), dtype=torch.float32))
-        self.tlif_w_param = nn.Parameter(torch.tensor(float(tlif_w), dtype=torch.float32))
-        self.tlif_b_param = nn.Parameter(torch.tensor(float(tlif_b), dtype=torch.float32))
-
-        self.v = None
+        # Kept only so old CLI/checkpoints can pass these names without changing
+        # the current formula. The tanh(alpha, w, b) modulation is not used.
+        self.tlif_alpha = float(tlif_alpha)
+        self.tlif_w = float(tlif_w)
+        self.tlif_b = float(tlif_b)
         self.b_base = None
         self.theta = None
 
@@ -599,43 +625,54 @@ class ThresholdLadderLIFNeuron(ASNFireMixin, nn.Module):
         self.v = None
         self.b_base = None
         self.theta = None
+        self.has_fired = None
+        self.step_count = 0
 
     def _ensure_state(self, x: torch.Tensor):
         need_init = (
             self.v is None
             or self.b_base is None
             or self.theta is None
+            or self.has_fired is None
             or self.v.shape != x.shape
             or self.b_base.shape != x.shape
             or self.theta.shape != x.shape
+            or self.has_fired.shape != x.shape
             or self.v.device != x.device
             or self.b_base.device != x.device
             or self.theta.device != x.device
+            or self.has_fired.device != x.device
         )
         if need_init:
             self.v = torch.zeros_like(x, dtype=torch.float32, device=x.device)
             self.b_base = torch.zeros_like(x, dtype=torch.float32, device=x.device)
             self.theta = torch.full_like(x, self.v_threshold, dtype=torch.float32, device=x.device)
+            self.has_fired = torch.zeros_like(x, dtype=torch.bool, device=x.device)
+            self.step_count = 0
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         self._ensure_state(x)
         x_f = x.to(torch.float32)
 
-        lambda_t = torch.as_tensor(self.tlif_lambda, dtype=self.v.dtype, device=self.v.device)
+        lambda_t = torch.as_tensor(self.tlif_lambda, device=self.v.device, dtype=self.v.dtype)
         v_t = self.b_base + lambda_t * (self.v - self.b_base) + x_f
 
         spike = self._asn_fire(v_t, self.theta)
         rs = spike.detach() if self.detach_reset else spike
         rs_f = rs.to(dtype=v_t.dtype)
 
-        alpha = self.tlif_alpha_param.to(dtype=v_t.dtype, device=v_t.device)
-        w = self.tlif_w_param.to(dtype=v_t.dtype, device=v_t.device)
-        bias = self.tlif_b_param.to(dtype=v_t.dtype, device=v_t.device)
-        delta = alpha * torch.tanh(w * v_t + bias)
+        self.step_count += 1
+        step_t = torch.as_tensor(float(self.step_count), device=v_t.device, dtype=v_t.dtype)
+        history_power = self._get_history_power(dtype=v_t.dtype, device=v_t.device)
+        norm = torch.pow(step_t + self.history_eps, history_power)
+        history_weight = self._get_history_weight(dtype=v_t.dtype, device=v_t.device, step_count=self.step_count)
+        threshold_drop = history_weight * (v_t / norm)
+        if self.history_mode == 'post_spike':
+            threshold_drop = threshold_drop * self.has_fired.to(dtype=threshold_drop.dtype)
 
         theta_step = torch.as_tensor(self.tlif_theta, dtype=v_t.dtype, device=v_t.device)
         min_interval = torch.as_tensor(self.tlif_min_interval, dtype=v_t.dtype, device=v_t.device)
-        next_interval = torch.clamp(theta_step + delta, min=min_interval)
+        next_interval = torch.clamp(theta_step - threshold_drop, min=min_interval)
 
         b_next = (1.0 - rs_f) * self.b_base + rs_f * self.theta
         theta_next = (1.0 - rs_f) * self.theta + rs_f * (self.theta + next_interval)
@@ -643,6 +680,7 @@ class ThresholdLadderLIFNeuron(ASNFireMixin, nn.Module):
         self.v = v_t
         self.b_base = b_next
         self.theta = theta_next
+        self.has_fired = torch.logical_or(self.has_fired, rs.bool())
         return spike.to(dtype=x.dtype)
 
 

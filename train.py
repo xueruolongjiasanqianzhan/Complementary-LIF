@@ -146,21 +146,21 @@ def main():
     parser.add_argument('-tau_learn_alpha', action='store_true', help='for newLIF only: make alpha learnable')
     parser.add_argument('-tau_alpha_share', action='store_true', help='for newLIF only: share alpha_up and alpha_down')
     parser.add_argument('-tau_learn_eta', action='store_true', help='for newLIFTauDep/newCLIF only: make eta learnable')
-    parser.add_argument('-history_weight', type=float, default=1.0, help='for LSLIF only: auxiliary history branch weight')
-    parser.add_argument('-history_power', type=float, default=1.0, help='for LSLIF only: normalization power for history branch')
-    parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF only: epsilon for history normalization')
-    parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF only: make history_weight learnable')
-    parser.add_argument('-history_weight_lo', type=float, default=-0.8, help='for LSLIF only: lower bound for learnable history_weight')
-    parser.add_argument('-history_weight_hi', type=float, default=0.8, help='for LSLIF only: upper bound for learnable history_weight')
-    parser.add_argument('-history_weight_per_step', action='store_true', help='for LSLIF only: use one learnable history_weight per time-step')
-    parser.add_argument('-history_learn_power', action='store_true', help='for LSLIF only: make history_power learnable')
-    parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike', 'half'], help='for LSLIF only: history mode (all, post_spike, or half: shallow post_spike and deep all)')
-    parser.add_argument('-tlif_lambda', type=float, default=0.5, help='for TLIF only: membrane retention ratio around dynamic lower bound')
-    parser.add_argument('-tlif_theta', type=float, default=None, help='for TLIF only: base threshold step; defaults to v_threshold')
-    parser.add_argument('-tlif_alpha', type=float, default=0.5, help='for TLIF only: learnable initial scale for dynamic threshold interval delta')
-    parser.add_argument('-tlif_w', type=float, default=1.0, help='for TLIF only: learnable initial weight for non-reset membrane in delta')
-    parser.add_argument('-tlif_b', type=float, default=0.0, help='for TLIF only: learnable initial bias for dynamic threshold interval delta')
-    parser.add_argument('-tlif_min_interval', type=float, default=1e-3, help='for TLIF only: lower bound that enforces theta + delta > 0')
+    parser.add_argument('-history_weight', type=float, default=1.0, help='for LSLIF/TLIF only: auxiliary non-reset V branch weight')
+    parser.add_argument('-history_power', type=float, default=1.0, help='for LSLIF/TLIF only: normalization power for non-reset V branch')
+    parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF/TLIF only: epsilon for history normalization')
+    parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF/TLIF only: make history_weight learnable')
+    parser.add_argument('-history_weight_lo', type=float, default=-0.8, help='for LSLIF/TLIF only: lower bound for learnable history_weight')
+    parser.add_argument('-history_weight_hi', type=float, default=0.8, help='for LSLIF/TLIF only: upper bound for learnable history_weight')
+    parser.add_argument('-history_weight_per_step', action='store_true', help='for LSLIF/TLIF only: use one learnable history_weight per time-step')
+    parser.add_argument('-history_learn_power', action='store_true', help='for LSLIF/TLIF only: make history_power learnable')
+    parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike', 'half'], help='for LSLIF/TLIF only: history mode (all, post_spike, or half: shallow post_spike and deep all)')
+    parser.add_argument('-tlif_lambda', type=float, default=0.5, help='for TLIF only: membrane retention ratio around the previous threshold lower bound')
+    parser.add_argument('-tlif_theta', type=float, default=None, help='for TLIF only: base threshold interval; defaults to v_threshold')
+    parser.add_argument('-tlif_alpha', type=float, default=0.5, help='deprecated for TLIF: ignored by the LSLIF-aligned implementation')
+    parser.add_argument('-tlif_w', type=float, default=1.0, help='deprecated for TLIF: ignored by the LSLIF-aligned implementation')
+    parser.add_argument('-tlif_b', type=float, default=0.0, help='deprecated for TLIF: ignored by the LSLIF-aligned implementation')
+    parser.add_argument('-tlif_min_interval', type=float, default=1e-3, help='for TLIF only: lower bound for theta - normalized V threshold drop')
     parser.add_argument('-rcm_reset', type=str, default='hard', choices=['hard', 'soft'], help='for RCMLIF only: main membrane reset type; hard uses rcm_v_reset, soft subtracts threshold')
     parser.add_argument('-rcm_v_reset', type=float, default=0.0, help='for RCMLIF only: hard-reset membrane value')
     parser.add_argument('-rcm_lambda', type=float, default=0.5, help='for RCMLIF only: reset-loss memory decay lambda_r')
@@ -691,16 +691,7 @@ def main():
             f'rcm_phi{args.rcm_phi}',
             f'rcm_power{args.rcm_power}',
         ])
-    elif args.neuron_model == 'TLIF':
-        run_name_parts.extend([
-            f'tlif_lambda{args.tlif_lambda}',
-            f'tlif_theta{args.tlif_theta}',
-            f'tlif_alpha{args.tlif_alpha}',
-            f'tlif_w{args.tlif_w}',
-            f'tlif_b{args.tlif_b}',
-            f'tlif_min_interval{args.tlif_min_interval}',
-        ])
-    if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSCLIF', 'LSPLIF']:
+    if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSCLIF', 'LSPLIF', 'TLIF']:
         history_weight_can_learn = '是' if args.history_learn_weight else '否'
         history_weight_per_step = '是' if args.history_weight_per_step else '否'
         history_power_can_learn = '是' if args.history_learn_power else '否'
@@ -715,6 +706,12 @@ def main():
             f'历史权重上界{args.history_weight_hi}',
             f'历史幂次可学习{history_power_can_learn}',
         ])
+        if args.neuron_model == 'TLIF':
+            run_name_parts.extend([
+                f'tlif_lambda{args.tlif_lambda}',
+                f'tlif_theta{args.tlif_theta}',
+                f'tlif_min_interval{args.tlif_min_interval}',
+            ])
 
     if args.asn_enable:
         asn_detach = '是' if args.asn_detach_lateral else '否'

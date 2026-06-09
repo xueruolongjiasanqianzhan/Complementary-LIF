@@ -54,9 +54,9 @@ python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model RCMLIF \
   -rcm_reset hard -rcm_v_reset 0.0 -rcm_lambda 0.5 -rcm_eta 1.0 -rcm_beta 1.0 -rcm_learn_eta -rcm_learn_beta -rcm_phi tanh -rcm_power 1.0
 
-# TLIF（特有参数：threshold ladder；V 不 reset，只更新 B/Theta；alpha/w/b 可学习）
+# TLIF（单膜电位；V/T^p 作为下一阈值间隔下降项）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model TLIF \
-  -tlif_lambda 0.5 -tlif_theta 1.0 -tlif_alpha 0.5 -tlif_w 1.0 -tlif_b 0.0 -tlif_min_interval 1e-3
+  -tlif_lambda 0.5 -tlif_theta 1.0 -tlif_min_interval 1e-3 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
 # LSLIF（特有参数：history 分支）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF \
@@ -130,9 +130,9 @@ python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model RCMLIF \
   -rcm_reset hard -rcm_v_reset 0.0 -rcm_lambda 0.5 -rcm_eta 1.0 -rcm_beta 1.0 -rcm_learn_eta -rcm_learn_beta -rcm_phi tanh -rcm_power 1.0
 
-# TLIF（特有参数：threshold ladder；V 不 reset，只更新 B/Theta；alpha/w/b 可学习）
+# TLIF（单膜电位；V/T^p 作为下一阈值间隔下降项）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model TLIF \
-  -tlif_lambda 0.5 -tlif_theta 1.0 -tlif_alpha 0.5 -tlif_w 1.0 -tlif_b 0.0 -tlif_min_interval 1e-3
+  -tlif_lambda 0.5 -tlif_theta 1.0 -tlif_min_interval 1e-3 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
 # LSLIF（特有参数：history 分支）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF \
@@ -206,9 +206,9 @@ python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model RCMLIF \
   -rcm_reset hard -rcm_v_reset 0.0 -rcm_lambda 0.5 -rcm_eta 1.0 -rcm_beta 1.0 -rcm_learn_eta -rcm_learn_beta -rcm_phi tanh -rcm_power 1.0
 
-# TLIF（特有参数：threshold ladder；V 不 reset，只更新 B/Theta；alpha/w/b 可学习）
+# TLIF（单膜电位；V/T^p 作为下一阈值间隔下降项）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model TLIF \
-  -tlif_lambda 0.5 -tlif_theta 1.0 -tlif_alpha 0.5 -tlif_w 1.0 -tlif_b 0.0 -tlif_min_interval 1e-3
+  -tlif_lambda 0.5 -tlif_theta 1.0 -tlif_min_interval 1e-3 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
 # LSLIF（特有参数：history 分支）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSLIF \
@@ -282,9 +282,9 @@ python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -m
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model RCMLIF \
   -rcm_reset hard -rcm_v_reset 0.0 -rcm_lambda 0.5 -rcm_eta 1.0 -rcm_beta 1.0 -rcm_learn_eta -rcm_learn_beta -rcm_phi tanh -rcm_power 1.0
 
-# TLIF（特有参数：threshold ladder；V 不 reset，只更新 B/Theta；alpha/w/b 可学习）
+# TLIF（单膜电位；V/T^p 作为下一阈值间隔下降项）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model TLIF \
-  -tlif_lambda 0.5 -tlif_theta 1.0 -tlif_alpha 0.5 -tlif_w 1.0 -tlif_b 0.0 -tlif_min_interval 1e-3
+  -tlif_lambda 0.5 -tlif_theta 1.0 -tlif_min_interval 1e-3 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
 # LSLIF（特有参数：history 分支）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSLIF \
@@ -358,9 +358,9 @@ python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model RCMLIF \
   -rcm_reset hard -rcm_v_reset 0.0 -rcm_lambda 0.5 -rcm_eta 1.0 -rcm_beta 1.0 -rcm_learn_eta -rcm_learn_beta -rcm_phi tanh -rcm_power 1.0
 
-# TLIF（特有参数：threshold ladder；V 不 reset，只更新 B/Theta；alpha/w/b 可学习）
+# TLIF（单膜电位；V/T^p 作为下一阈值间隔下降项）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model TLIF \
-  -tlif_lambda 0.5 -tlif_theta 1.0 -tlif_alpha 0.5 -tlif_w 1.0 -tlif_b 0.0 -tlif_min_interval 1e-3
+  -tlif_lambda 0.5 -tlif_theta 1.0 -tlif_min_interval 1e-3 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
 # LSLIF（特有参数：history 分支）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF \
