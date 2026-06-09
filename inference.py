@@ -572,6 +572,12 @@ def main():
             f'_rle{int(args.rcm_learn_eta)}_rlb{int(args.rcm_learn_beta)}'
             f'_rp{args.rcm_phi}_rpow{args.rcm_power}'
         )
+    elif args.neuron_model == 'TLIF':
+        out_dir += (
+            f'_tl{args.tlif_lambda}_tt{args.tlif_theta}'
+            f'_ta{args.tlif_alpha}_tw{args.tlif_w}_tb{args.tlif_b}'
+            f'_tmin{args.tlif_min_interval}'
+        )
     elif args.neuron_model == 'DTLIF':
         out_dir += (
             f'_dt{args.dtlif_dt}_a{args.dtlif_a}_b{args.dtlif_b}'
