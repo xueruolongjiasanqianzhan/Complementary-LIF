@@ -137,7 +137,7 @@ def main():
     parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF/TLIF only: epsilon for history normalization')
     parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF/TLIF only: make history_weight learnable')
     parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike'], help='for LSLIF/TLIF only: when to use the non-reset V branch (all steps or only after neuron has fired)')
-    parser.add_argument('-tlif_lambda', type=float, default=0.5, help='for TLIF only: membrane retention ratio around the previous threshold lower bound')
+    parser.add_argument('-tlif_lambda', type=float, default=0.5, help='for TLIF only: per-step threshold growth ratio based on the current-prev threshold gap')
     parser.add_argument('-tlif_theta', type=float, default=None, help='for TLIF only: base threshold interval; defaults to v_threshold')
     parser.add_argument('-tlif_alpha', type=float, default=0.5, help='deprecated for TLIF: ignored by the LSLIF-aligned implementation')
     parser.add_argument('-tlif_w', type=float, default=1.0, help='deprecated for TLIF: ignored by the LSLIF-aligned implementation')
