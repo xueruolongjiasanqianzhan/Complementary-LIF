@@ -522,25 +522,25 @@ class ThresholdLadderLIFNeuron(LSLIFNeuron):
     """
     Threshold-modulated LIF with a single membrane state.
 
-    TLIF keeps one membrane ``v``. The same membrane is used both for firing and
-    for computing the post-spike threshold interval adjustment. Between spikes,
-    it leaks toward the previous threshold lower bound ``B_t``:
+    TLIF keeps one non-reset, non-leaky membrane ``v``. The membrane only
+    integrates the input, while the dynamic activity that used to belong to the
+    membrane is moved to the threshold ladder:
 
-      V_t = B_t + lambda * (V_{t-1} - B_t) + I_t
-      s_t = H(V_t - Theta_t)
+      V_t = V_{t-1} + I_t
+      Theta_t^time = Theta_t + lambda * (Theta_t - B_t)
+      s_t = H(V_t - Theta_t^time)
 
-    When the neuron spikes, the threshold ladder advances. The interval update
-    uses an LSLIF-style time-normalized value from ``V_t`` itself, not a
-    difference such as ``V_t - B_t`` or ``V_t - Theta_t``:
+    The threshold rises every step by a ratio of the current interval
+    ``Theta_t - B_t``. When the neuron spikes, the threshold ladder then
+    advances with the existing LSLIF-style interval adjustment from ``V_t``:
 
       A_t = beta * V_t / (step_t + eps)^power
       D_t = clamp(theta - A_t, min_interval)
-      B_{t+1} = (1 - s_t) * B_t + s_t * Theta_t
-      Theta_{t+1} = (1 - s_t) * Theta_t + s_t * (Theta_t + D_t)
+      B_{t+1} = (1 - s_t) * B_t + s_t * Theta_t^time
+      Theta_{t+1} = Theta_t^time + s_t * D_t
 
-    Thus the LSLIF-like branch acts as a threshold-drop term for the next
-    threshold interval while the membrane itself remains a single non-reset
-    state with a dynamic decay lower bound.
+    Thus the membrane itself is a pure accumulator, and both the per-step
+    progression and spike-triggered adaptation are represented by the threshold.
     """
 
     def __init__(
@@ -655,9 +655,10 @@ class ThresholdLadderLIFNeuron(LSLIFNeuron):
         x_f = x.to(torch.float32)
 
         lambda_t = torch.as_tensor(self.tlif_lambda, device=self.v.device, dtype=self.v.dtype)
-        v_t = self.b_base + lambda_t * (self.v - self.b_base) + x_f
+        v_t = self.v + x_f
+        theta_time = self.theta + lambda_t * (self.theta - self.b_base)
 
-        spike = self._asn_fire(v_t, self.theta)
+        spike = self._asn_fire(v_t, theta_time)
         rs = spike.detach() if self.detach_reset else spike
         rs_f = rs.to(dtype=v_t.dtype)
 
@@ -674,8 +675,8 @@ class ThresholdLadderLIFNeuron(LSLIFNeuron):
         min_interval = torch.as_tensor(self.tlif_min_interval, dtype=v_t.dtype, device=v_t.device)
         next_interval = torch.clamp(theta_step - threshold_drop, min=min_interval)
 
-        b_next = (1.0 - rs_f) * self.b_base + rs_f * self.theta
-        theta_next = (1.0 - rs_f) * self.theta + rs_f * (self.theta + next_interval)
+        b_next = (1.0 - rs_f) * self.b_base + rs_f * theta_time
+        theta_next = theta_time + rs_f * next_interval
 
         self.v = v_t
         self.b_base = b_next
