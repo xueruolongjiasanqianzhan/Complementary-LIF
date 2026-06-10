@@ -378,35 +378,39 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
 
 class LSLIF2Neuron(LSLIFNeuron):
     """
-    LSLIF variant whose auxiliary branch uses the running average of inputs.
+    LSLIF variant whose auxiliary branch grows historical inputs over time.
 
     Main membrane dynamics and reset behavior are the same as ``LSLIFNeuron``.
-    The history branch is replaced with
+    The history branch is replaced with a non-reset enhanced input memory
 
-      history_t = beta * (sum_{i=1..t} x_i) / t
+      h_t = gamma * h_{t-1} + x_t
+      history_t = beta * h_t / t
 
-    i.e., no decay over time in the auxiliary branch.
+    where ``gamma`` is ``history_growth``. When ``history_growth`` is 1.0,
+    this reduces to the previous running-average input branch; values above
+    1.0 progressively amplify earlier inputs before normalization.
     """
 
     def __init__(self, *args, **kwargs):
+        self.history_growth = float(kwargs.pop('history_growth', 1.1))
         kwargs['history_power'] = 1.0
         kwargs['history_learn_power'] = False
         super().__init__(*args, **kwargs)
-        self.x_sum = None
+        self.history_state = None
 
     def reset(self):
         super().reset()
-        self.x_sum = None
+        self.history_state = None
 
     def _ensure_state(self, x: torch.Tensor):
         super()._ensure_state(x)
         need_init = (
-            self.x_sum is None
-            or self.x_sum.shape != x.shape
-            or self.x_sum.device != x.device
+            self.history_state is None
+            or self.history_state.shape != x.shape
+            or self.history_state.device != x.device
         )
         if need_init:
-            self.x_sum = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.history_state = torch.zeros_like(x, dtype=torch.float32, device=x.device)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         self._ensure_state(x)
@@ -421,9 +425,10 @@ class LSLIF2Neuron(LSLIFNeuron):
             m_t = self.v * decay + x_f
 
         self.step_count += 1
-        self.x_sum = self.x_sum + x_f
+        history_growth = torch.as_tensor(self.history_growth, device=m_t.device, dtype=m_t.dtype)
+        self.history_state = history_growth * self.history_state + x_f
         step_t = torch.as_tensor(float(self.step_count), device=m_t.device, dtype=m_t.dtype)
-        history_avg = self.x_sum / (step_t + self.history_eps)
+        history_avg = self.history_state / (step_t + self.history_eps)
         history_weight = self._get_history_weight(dtype=m_t.dtype, device=m_t.device, step_count=self.step_count)
         history_term = history_weight * history_avg
         if self.history_mode == 'post_spike':
