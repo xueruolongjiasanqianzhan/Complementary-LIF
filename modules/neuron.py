@@ -378,17 +378,20 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
 
 class LSLIF2Neuron(LSLIFNeuron):
     """
-    LSLIF variant whose auxiliary branch grows historical inputs over time.
+    LSLIF variant with a residual auxiliary membrane.
 
-    Main membrane dynamics and reset behavior are the same as ``LSLIFNeuron``.
-    The history branch is replaced with a non-reset enhanced input memory
+    The primary membrane integrates the current input and is hard-reset to zero
+    after a spike. A separate auxiliary membrane keeps only the residual left by
+    the total firing membrane after soft reset:
 
-      h_t = gamma * h_{t-1} + x_t
-      history_t = beta * h_t / t
+      u'_t = decay * u_{t-1}
+      M_t = m_t + beta * u'_t / t
+      u_t = u'_t + reset_spike * (M_t - threshold)
 
-    where ``gamma`` is ``history_growth``. When ``history_growth`` is 1.0,
-    this reduces to the previous running-average input branch; values above
-    1.0 progressively amplify earlier inputs before normalization.
+    The auxiliary membrane leaks with the same ``tau`` as the primary membrane,
+    never receives ``x_t`` directly, and never resets. ``history_growth`` is kept
+    as a backward-compatible constructor argument but is not used by this
+    residual-memory formulation.
     """
 
     def __init__(self, *args, **kwargs):
@@ -417,18 +420,17 @@ class LSLIF2Neuron(LSLIFNeuron):
         x_f = x.to(torch.float32)
 
         tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
+        decay = 1.0 - 1.0 / (tau_eff + self.tau_eps)
+        decay = torch.clamp(decay, 0.0, 1.0)
         if self.decay_input:
             m_t = self.v + (x_f - self.v) / (tau_eff + self.tau_eps)
         else:
-            decay = 1.0 - 1.0 / (tau_eff + self.tau_eps)
-            decay = torch.clamp(decay, 0.0, 1.0)
             m_t = self.v * decay + x_f
 
         self.step_count += 1
-        history_growth = torch.as_tensor(self.history_growth, device=m_t.device, dtype=m_t.dtype)
-        self.history_state = history_growth * self.history_state + x_f
+        residual_mem = self.history_state * decay
         step_t = torch.as_tensor(float(self.step_count), device=m_t.device, dtype=m_t.dtype)
-        history_avg = self.history_state / (step_t + self.history_eps)
+        history_avg = residual_mem / (step_t + self.history_eps)
         history_weight = self._get_history_weight(dtype=m_t.dtype, device=m_t.device, step_count=self.step_count)
         history_term = history_weight * history_avg
         if self.history_mode == 'post_spike':
@@ -439,11 +441,8 @@ class LSLIF2Neuron(LSLIFNeuron):
         spike = self._asn_fire(total_mem, th_f)
 
         rs = spike.detach() if self.detach_reset else spike
-        if self.v_reset is None:
-            self.v = m_t - rs * th_f
-        else:
-            v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
-            self.v = torch.where(rs.bool(), v_reset_t, m_t)
+        self.history_state = residual_mem + rs * (total_mem - th_f)
+        self.v = m_t * (1.0 - rs)
 
         self.has_fired = torch.logical_or(self.has_fired, rs.bool())
         return spike.to(dtype=x.dtype)

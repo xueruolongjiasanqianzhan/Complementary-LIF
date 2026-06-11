@@ -149,7 +149,7 @@ def main():
     parser.add_argument('-history_weight', type=float, default=1.0, help='for LSLIF/TLIF only: auxiliary non-reset V branch weight')
     parser.add_argument('-history_power', type=float, default=1.0, help='for LSLIF/TLIF only: normalization power for non-reset V branch')
     parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF/TLIF only: epsilon for history normalization')
-    parser.add_argument('-history_growth', type=float, default=1.1, help='for LSLIF2 only: growth factor gamma for enhanced input history')
+    parser.add_argument('-history_growth', type=float, default=1.1, help='for LSLIF2 only: deprecated compatibility argument; residual-memory LSLIF2 ignores it')
     parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF/TLIF only: make history_weight learnable')
     parser.add_argument('-history_weight_lo', type=float, default=-0.8, help='for LSLIF/TLIF only: lower bound for learnable history_weight')
     parser.add_argument('-history_weight_hi', type=float, default=0.8, help='for LSLIF/TLIF only: upper bound for learnable history_weight')
@@ -205,7 +205,7 @@ def main():
 
     args = parser.parse_args()
     if args.neuron_model == 'LSLIF2' and (args.history_learn_power or abs(float(args.history_power) - 1.0) > 1e-12):
-        print('警告: LSLIF2 的历史支路使用增强历史输入 h_t=gamma*h_{t-1}+x_t，不使用 history_power；将固定为 1.0，history_learn_power 无效。')
+        print('警告: LSLIF2 使用总膜残余副膜，不使用 history_power/history_learn_power；将固定为 1.0/False，history_growth 仅保留兼容但无效。')
         args.history_power = 1.0
         args.history_learn_power = False
     print(args)
@@ -709,7 +709,7 @@ def main():
             f'历史幂次可学习{history_power_can_learn}',
         ])
         if args.neuron_model == 'LSLIF2':
-            run_name_parts.append(f'历史增长{args.history_growth}')
+            run_name_parts.append(f'历史增长未使用{args.history_growth}')
         if args.neuron_model == 'TLIF':
             run_name_parts.extend([
                 f'tlif_lambda{args.tlif_lambda}',
