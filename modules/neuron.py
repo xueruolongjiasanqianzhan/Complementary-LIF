@@ -382,13 +382,17 @@ class LSLIF2Neuron(LSLIFNeuron):
 
     The primary membrane integrates the current input and is hard-reset to zero
     after a spike. A separate auxiliary membrane keeps only the residual left by
-    the total firing membrane after soft reset:
+    the total firing membrane after soft reset. By default, this residual
+    auxiliary membrane is added directly to the primary membrane at every time
+    step:
 
       u'_t = decay * u_{t-1}
-      M_t = m_t + beta * u'_t / t
+      M_t = m_t + u'_t
       u_t = u'_t + reset_spike * (M_t - threshold)
 
-    The auxiliary membrane leaks with the same ``tau`` as the primary membrane,
+    For compatibility, ``lslif2_aux_mode='scaled_avg'`` restores the older
+    weighted time-normalized fusion ``M_t = m_t + beta * u'_t / t``. The
+    auxiliary membrane leaks with the same ``tau`` as the primary membrane,
     never receives ``x_t`` directly, and never resets. ``history_growth`` is kept
     as a backward-compatible constructor argument but is not used by this
     residual-memory formulation.
@@ -396,6 +400,12 @@ class LSLIF2Neuron(LSLIFNeuron):
 
     def __init__(self, *args, **kwargs):
         self.history_growth = float(kwargs.pop('history_growth', 1.1))
+        self.lslif2_aux_mode = str(kwargs.pop('lslif2_aux_mode', 'direct')).lower()
+        if self.lslif2_aux_mode not in {'direct', 'scaled_avg'}:
+            raise ValueError(
+                f"Unsupported lslif2_aux_mode: {self.lslif2_aux_mode}. "
+                "Expected 'direct' or 'scaled_avg'."
+            )
         kwargs['history_power'] = 1.0
         kwargs['history_learn_power'] = False
         super().__init__(*args, **kwargs)
@@ -429,10 +439,13 @@ class LSLIF2Neuron(LSLIFNeuron):
 
         self.step_count += 1
         residual_mem = self.history_state * decay
-        step_t = torch.as_tensor(float(self.step_count), device=m_t.device, dtype=m_t.dtype)
-        history_avg = residual_mem / (step_t + self.history_eps)
-        history_weight = self._get_history_weight(dtype=m_t.dtype, device=m_t.device, step_count=self.step_count)
-        history_term = history_weight * history_avg
+        if self.lslif2_aux_mode == 'direct':
+            history_term = residual_mem
+        else:
+            step_t = torch.as_tensor(float(self.step_count), device=m_t.device, dtype=m_t.dtype)
+            history_avg = residual_mem / (step_t + self.history_eps)
+            history_weight = self._get_history_weight(dtype=m_t.dtype, device=m_t.device, step_count=self.step_count)
+            history_term = history_weight * history_avg
         if self.history_mode == 'post_spike':
             history_term = history_term * self.has_fired.to(dtype=history_term.dtype)
         total_mem = m_t + history_term
