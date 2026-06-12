@@ -150,6 +150,7 @@ def main():
     parser.add_argument('-history_power', type=float, default=1.0, help='for LSLIF/TLIF only: normalization power for non-reset V branch')
     parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF/TLIF only: epsilon for history normalization')
     parser.add_argument('-history_growth', type=float, default=1.1, help='for LSLIF2 only: deprecated compatibility argument; residual-memory LSLIF2 ignores it')
+    parser.add_argument('-lslif2_aux_mode', type=str, default='direct', choices=['direct', 'scaled_avg'], help='for LSLIF2 only: auxiliary residual fusion; direct adds residual membrane directly (default), scaled_avg uses history_weight * residual / t')
     parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF/TLIF only: make history_weight learnable')
     parser.add_argument('-history_weight_lo', type=float, default=-0.8, help='for LSLIF/TLIF only: lower bound for learnable history_weight')
     parser.add_argument('-history_weight_hi', type=float, default=0.8, help='for LSLIF/TLIF only: upper bound for learnable history_weight')
@@ -205,7 +206,7 @@ def main():
 
     args = parser.parse_args()
     if args.neuron_model == 'LSLIF2' and (args.history_learn_power or abs(float(args.history_power) - 1.0) > 1e-12):
-        print('警告: LSLIF2 使用总膜残余副膜，不使用 history_power/history_learn_power；将固定为 1.0/False，history_growth 仅保留兼容但无效。')
+        print('警告: LSLIF2 使用总膜残余副膜；direct 模式直接叠加副膜，scaled_avg 模式固定 history_power=1.0 且不学习；history_growth 仅保留兼容但无效。')
         args.history_power = 1.0
         args.history_learn_power = False
     print(args)
@@ -518,6 +519,7 @@ def main():
         history_power=args.history_power,
         history_eps=args.history_eps,
         history_growth=args.history_growth,
+        lslif2_aux_mode=args.lslif2_aux_mode,
         history_learn_weight=args.history_learn_weight,
         history_weight_lo=args.history_weight_lo,
         history_weight_hi=args.history_weight_hi,
@@ -709,7 +711,10 @@ def main():
             f'历史幂次可学习{history_power_can_learn}',
         ])
         if args.neuron_model == 'LSLIF2':
-            run_name_parts.append(f'历史增长未使用{args.history_growth}')
+            run_name_parts.extend([
+                f'历史增长未使用{args.history_growth}',
+                f'LSLIF2副膜融合{args.lslif2_aux_mode}',
+            ])
         if args.neuron_model == 'TLIF':
             run_name_parts.extend([
                 f'tlif_lambda{args.tlif_lambda}',
