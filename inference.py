@@ -117,7 +117,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, RCMLIF, TLIF, LSLIF, LSLIF2, LSLIF3, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, RCMLIF, TLIF, LSLIF, LSLIF2, LSLIF3, LSLIF4, CLIF, PLIF, relu')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
@@ -415,6 +415,8 @@ def main():
         neuron_model = neuron.LSLIF2Neuron
     elif args.neuron_model == 'LSLIF3':
         neuron_model = neuron.LSLIF3Neuron
+    elif args.neuron_model == 'LSLIF4':
+        neuron_model = neuron.LSLIF4Neuron
     elif args.neuron_model == 'RCMLIF':
         neuron_model = neuron.RCMLIFNeuron
     elif args.neuron_model == 'TLIF':
@@ -577,7 +579,7 @@ def main():
 
     if args.neuron_model != 'LIF':
         out_dir += f'_{args.neuron_model}_'
-    if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSLIF3', 'TLIF']:
+    if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSLIF3', 'LSLIF4', 'TLIF']:
         out_dir += (
             f'_hw{args.history_weight}_hp{args.history_power}_he{args.history_eps}_hm{args.history_mode}'
             f'_hlw{int(args.history_learn_weight)}_hps{int(args.history_weight_per_step)}'
