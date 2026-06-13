@@ -117,7 +117,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, RCMLIF, TLIF, LSLIF, LSLIF2, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, RCMLIF, TLIF, LSLIF, LSLIF2, LSLIF3, CLIF, PLIF, relu')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
@@ -138,7 +138,11 @@ def main():
     parser.add_argument('-history_growth', type=float, default=1.1, help='for LSLIF2 only: deprecated compatibility argument; residual-memory LSLIF2 ignores it')
     parser.add_argument('-lslif2_aux_mode', type=str, default='direct', choices=['direct', 'scaled_avg'], help='for LSLIF2 only: auxiliary residual fusion; direct adds residual membrane directly (default), scaled_avg uses history_weight * residual / t')
     parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF/TLIF only: make history_weight learnable')
-    parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike'], help='for LSLIF/TLIF only: when to use the non-reset V branch (all steps or only after neuron has fired)')
+    parser.add_argument('-history_weight_lo', type=float, default=-0.8, help='for LSLIF/TLIF only: lower bound for learnable history_weight')
+    parser.add_argument('-history_weight_hi', type=float, default=0.8, help='for LSLIF/TLIF only: upper bound for learnable history_weight')
+    parser.add_argument('-history_weight_per_step', action='store_true', help='for LSLIF/TLIF only: use one learnable history_weight per time-step')
+    parser.add_argument('-history_learn_power', action='store_true', help='for LSLIF/TLIF only: make history_power learnable')
+    parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike', 'half'], help='for LSLIF/TLIF only: history mode (all, post_spike, or half: shallow post_spike and deep all)')
     parser.add_argument('-tlif_lambda', type=float, default=0.5, help='for TLIF only: per-step threshold growth ratio based on the current-prev threshold gap')
     parser.add_argument('-tlif_theta', type=float, default=None, help='for TLIF only: base threshold interval; defaults to v_threshold')
     parser.add_argument('-tlif_alpha', type=float, default=0.5, help='deprecated for TLIF: ignored by the LSLIF-aligned implementation')
@@ -187,9 +191,10 @@ def main():
     parser.set_defaults(dgn_learn_c=True, dgn_learn_w=True, lifdgn_learn_g0=True, lifdgn_learn_c=True)
 
     args = parser.parse_args()
-    if args.neuron_model == 'LSLIF2' and abs(float(args.history_power) - 1.0) > 1e-12:
-        print('警告: LSLIF2 使用总膜残余副膜；direct 模式直接叠加副膜，scaled_avg 模式固定 history_power=1.0；history_growth 仅保留兼容但无效。')
+    if args.neuron_model == 'LSLIF2' and (args.history_learn_power or abs(float(args.history_power) - 1.0) > 1e-12):
+        print('警告: LSLIF2 使用总膜残余副膜；direct 模式直接叠加副膜，scaled_avg 模式固定 history_power=1.0 且不学习；history_growth 仅保留兼容但无效。')
         args.history_power = 1.0
+        args.history_learn_power = False
     print(args)
 
     _seed_ = args.seed
@@ -408,6 +413,8 @@ def main():
         neuron_model = neuron.LSLIFNeuron
     elif args.neuron_model == 'LSLIF2':
         neuron_model = neuron.LSLIF2Neuron
+    elif args.neuron_model == 'LSLIF3':
+        neuron_model = neuron.LSLIF3Neuron
     elif args.neuron_model == 'RCMLIF':
         neuron_model = neuron.RCMLIFNeuron
     elif args.neuron_model == 'TLIF':
@@ -468,6 +475,11 @@ def main():
         history_growth=args.history_growth,
         lslif2_aux_mode=args.lslif2_aux_mode,
         history_learn_weight=args.history_learn_weight,
+        history_weight_lo=args.history_weight_lo,
+        history_weight_hi=args.history_weight_hi,
+        history_weight_per_step=args.history_weight_per_step,
+        history_max_steps=args.T,
+        history_learn_power=args.history_learn_power,
         history_mode=args.history_mode,
         rcm_lambda=args.rcm_lambda,
         rcm_eta=args.rcm_eta,
@@ -565,8 +577,12 @@ def main():
 
     if args.neuron_model != 'LIF':
         out_dir += f'_{args.neuron_model}_'
-    if args.neuron_model in ['LSLIF', 'LSLIF2', 'TLIF']:
-        out_dir += f'_hw{args.history_weight}_hp{args.history_power}_he{args.history_eps}_hm{args.history_mode}_hlw{int(args.history_learn_weight)}'
+    if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSLIF3', 'TLIF']:
+        out_dir += (
+            f'_hw{args.history_weight}_hp{args.history_power}_he{args.history_eps}_hm{args.history_mode}'
+            f'_hlw{int(args.history_learn_weight)}_hps{int(args.history_weight_per_step)}'
+            f'_hlo{args.history_weight_lo}_hhi{args.history_weight_hi}_hlp{int(args.history_learn_power)}'
+        )
         if args.neuron_model == 'LSLIF2':
             out_dir += f'_hg_unused{args.history_growth}_aux{args.lslif2_aux_mode}'
         if args.neuron_model == 'TLIF':
