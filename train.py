@@ -124,7 +124,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), ZELIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSCLIF, LSPLIF, RCMLIF, TLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), ZELIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, CLIF, PLIF, relu')
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
     parser.add_argument('-asn_enable', action='store_true', help='enable ASN local lateral inhibition on 4D neuron maps')
     parser.add_argument('-asn_p', type=float, default=0.5, help='for ASN only: Bernoulli probability for ASN-like positions')
@@ -459,6 +459,8 @@ def main():
         neuron_model = neuron.LSLIF2Neuron
     elif args.neuron_model == 'LSLIF3':
         neuron_model = neuron.LSLIF3Neuron
+    elif args.neuron_model == 'LSLIF4':
+        neuron_model = neuron.LSLIF4Neuron
     elif args.neuron_model == 'LSCLIF':
         neuron_model = neuron.LSCLIFNeuron
     elif args.neuron_model == 'LSPLIF':
@@ -697,7 +699,7 @@ def main():
             f'rcm_phi{args.rcm_phi}',
             f'rcm_power{args.rcm_power}',
         ])
-    if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSLIF3', 'LSCLIF', 'LSPLIF', 'TLIF']:
+    if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSLIF3', 'LSLIF4', 'LSCLIF', 'LSPLIF', 'TLIF']:
         history_weight_can_learn = '是' if args.history_learn_weight else '否'
         history_weight_per_step = '是' if args.history_weight_per_step else '否'
         history_power_can_learn = '是' if args.history_learn_power else '否'
