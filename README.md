@@ -38,26 +38,44 @@ We use single GTX4090 GPU for running all the experiments. Multi-GPU training is
 CIFAR-10, CIFAR-100, Tiny-Imagenet, DVS-CIFAR10, and DVS-Gesture:
 
     # CIFAR-10
-	python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron CLIF
+	python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model CLIF
     
     # CIFAR-100
-    python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron CLIF
+    python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model CLIF
     
     # Tiny-Imagenet
-    python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron CLIF
+    python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model CLIF
        
     # DVS-CIFAR10
-	python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr=0.05  -mse_n_reg -neuron CLIF
+	python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr=0.05  -mse_n_reg -neuron_model CLIF
 	
 	# DVS-Gesture
-    python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4  -neuron CLIF
+    python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4  -neuron_model CLIF
 
-If you change the neuron, you can switch with ``-neuron_model`` among ``LIF`` (vanilla), ``newLIF`` (adaptive tau), ``newLIFTauDep``, ``newCLIF``, ``DTLIF``, ``DGN``, ``LIFDGN``, ``LSLIF``, ``LSLIF2``, ``LSLIF3``, ``CLIF``, ``PLIF``, and ``relu``.
+
+LSLIF4 uses the same dataset/model commands; only switch the neuron option to ``-neuron_model LSLIF4``:
+
+    # CIFAR-10 with LSLIF4
+    python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF4
+
+    # CIFAR-100 with LSLIF4
+    python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -neuron_model LSLIF4
+
+    # Tiny-Imagenet with LSLIF4
+    python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSLIF4
+
+    # DVS-CIFAR10 with LSLIF4
+    python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr=0.05 -mse_n_reg -neuron_model LSLIF4
+
+    # DVS-Gesture with LSLIF4
+    python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF4
+
+If you change the neuron, you can switch with ``-neuron_model`` among ``LIF`` (vanilla), ``newLIF`` (adaptive tau), ``newLIFTauDep``, ``newCLIF``, ``DTLIF``, ``DGN``, ``LIFDGN``, ``LSLIF``, ``LSLIF2``, ``LSLIF3``, ``LSLIF4``, ``CLIF``, ``PLIF``, and ``relu``.
 
 For example to setup LIF neuron for CIFAR-10 task:
 
     # LIF neuron for CIFAR-10
-	python train_BPTT.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -amp -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron LIF
+	python train_BPTT.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -amp -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIF
     
 
 

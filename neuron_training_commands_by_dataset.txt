@@ -70,6 +70,10 @@ python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF3 \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
+# LSLIF4（特有参数：累计主膜泄漏/重置损失的 history 分支；基于融合膜电位 reset，默认 soft reset）
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF4 \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
 # LSCLIF（特有参数：history 分支 + CLIF complementary memory）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSCLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
@@ -148,6 +152,10 @@ python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -
 
 # LSLIF3（特有参数：仅 history 分支；如需可学习，追加 -history_learn_weight / -history_weight_per_step / -history_learn_power）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF3 \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# LSLIF4（特有参数：累计主膜泄漏/重置损失的 history 分支；基于融合膜电位 reset，默认 soft reset）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF4 \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
 # LSCLIF（特有参数：history 分支 + CLIF complementary memory）
@@ -230,6 +238,10 @@ python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSLIF3 \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
+# LSLIF4（特有参数：累计主膜泄漏/重置损失的 history 分支；基于融合膜电位 reset，默认 soft reset）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSLIF4 \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
 # LSCLIF（特有参数：history 分支 + CLIF complementary memory）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSCLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
@@ -310,6 +322,10 @@ python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -m
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSLIF3 \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
+# LSLIF4（特有参数：累计主膜泄漏/重置损失的 history 分支；基于融合膜电位 reset，默认 soft reset）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSLIF4 \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
 # LSCLIF（特有参数：history 分支 + CLIF complementary memory）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSCLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
@@ -388,6 +404,10 @@ python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn
 
 # LSLIF3（特有参数：仅 history 分支；如需可学习，追加 -history_learn_weight / -history_weight_per_step / -history_learn_power）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF3 \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# LSLIF4（特有参数：累计主膜泄漏/重置损失的 history 分支；基于融合膜电位 reset，默认 soft reset）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF4 \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
 # LSCLIF（特有参数：history 分支 + CLIF complementary memory）

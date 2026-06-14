@@ -441,6 +441,73 @@ class LSLIF3Neuron(LSLIFNeuron):
         return spike.to(dtype=x.dtype)
 
 
+class LSLIF4Neuron(LSLIFNeuron):
+    """
+    LSLIF variant whose auxiliary branch stores the membrane value lost by the
+    resettable primary membrane.
+
+    Compared with ``LSLIFNeuron``, the auxiliary state ``n`` no longer receives
+    the input directly and does not leak. Instead, it accumulates every value
+    removed from the primary membrane:
+
+      - leakage loss: when ``v`` decays, add the leaked amount to ``n``;
+      - soft reset: after a spike, subtract one threshold from the fused
+        firing membrane and add that threshold value to ``n``;
+      - hard reset: after a spike, reset the primary membrane from the fused
+        firing membrane and add that whole fused value to ``n``.
+
+    The firing membrane keeps the LSLIF-style fusion
+
+      M_t = v_t + beta * n_t / step_t^power
+
+    so the loss-history branch is time-normalized, weighted, and added back to
+    the primary membrane before thresholding.
+    """
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+
+        tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
+        inv_tau = 1.0 / (tau_eff + self.tau_eps)
+        if self.decay_input:
+            leak_loss = self.v * inv_tau
+            v_t = self.v + (x_f - self.v) * inv_tau
+        else:
+            decay = 1.0 - inv_tau
+            decay = torch.clamp(decay, 0.0, 1.0)
+            leak_loss = self.v * (1.0 - decay)
+            v_t = self.v * decay + x_f
+
+        n_t = self.n + leak_loss
+
+        self.step_count += 1
+        step_t = torch.as_tensor(float(self.step_count), device=v_t.device, dtype=v_t.dtype)
+        history_power = self._get_history_power(dtype=v_t.dtype, device=v_t.device)
+        norm = torch.pow(step_t + self.history_eps, history_power)
+        history_weight = self._get_history_weight(dtype=v_t.dtype, device=v_t.device, step_count=self.step_count)
+        history_term = history_weight * (n_t / norm)
+        if self.history_mode == 'post_spike':
+            history_term = history_term * self.has_fired.to(dtype=history_term.dtype)
+        total_mem = v_t + history_term
+
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+        spike = self._asn_fire(total_mem, th_f)
+
+        rs = spike.detach() if self.detach_reset else spike
+        if self.v_reset is None:
+            reset_loss = rs * th_f
+            self.v = torch.where(rs.bool(), total_mem - reset_loss, v_t)
+        else:
+            reset_loss = rs * total_mem
+            v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
+            self.v = torch.where(rs.bool(), v_reset_t, v_t)
+
+        self.n = n_t + reset_loss
+        self.has_fired = torch.logical_or(self.has_fired, rs.bool())
+        return spike.to(dtype=x.dtype)
+
+
 class LSLIF2Neuron(LSLIFNeuron):
     """
     LSLIF variant with a residual auxiliary membrane.

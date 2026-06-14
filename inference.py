@@ -117,7 +117,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, RCMLIF, TLIF, LSLIF, LSLIF2, LSLIF3, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, RCMLIF, TLIF, LSLIF, LSLIF2, LSLIF3, LSLIF4, CLIF, PLIF, relu')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
     parser.add_argument('-label_smoothing', type=float, default=0.0, help='label_smoothing for cross entropy')
@@ -132,17 +132,17 @@ def main():
     parser.add_argument('-tau_learn_alpha', action='store_true', help='for newLIF only: make alpha learnable')
     parser.add_argument('-tau_alpha_share', action='store_true', help='for newLIF only: share alpha_up and alpha_down')
     parser.add_argument('-tau_learn_eta', action='store_true', help='for newLIFTauDep/newCLIF only: make eta learnable')
-    parser.add_argument('-history_weight', type=float, default=1.0, help='for LSLIF/TLIF only: auxiliary non-reset V branch weight')
-    parser.add_argument('-history_power', type=float, default=1.0, help='for LSLIF/TLIF only: normalization power for non-reset V branch')
-    parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF/TLIF only: epsilon for history normalization')
+    parser.add_argument('-history_weight', type=float, default=1.0, help='for LSLIF-family/TLIF only: auxiliary non-reset V branch weight')
+    parser.add_argument('-history_power', type=float, default=1.0, help='for LSLIF-family/TLIF only: normalization power for non-reset V branch')
+    parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF-family/TLIF only: epsilon for history normalization')
     parser.add_argument('-history_growth', type=float, default=1.1, help='for LSLIF2 only: deprecated compatibility argument; residual-memory LSLIF2 ignores it')
     parser.add_argument('-lslif2_aux_mode', type=str, default='direct', choices=['direct', 'scaled_avg'], help='for LSLIF2 only: auxiliary residual fusion; direct adds residual membrane directly (default), scaled_avg uses history_weight * residual / t')
-    parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF/TLIF only: make history_weight learnable')
-    parser.add_argument('-history_weight_lo', type=float, default=-0.8, help='for LSLIF/TLIF only: lower bound for learnable history_weight')
-    parser.add_argument('-history_weight_hi', type=float, default=0.8, help='for LSLIF/TLIF only: upper bound for learnable history_weight')
-    parser.add_argument('-history_weight_per_step', action='store_true', help='for LSLIF/TLIF only: use one learnable history_weight per time-step')
-    parser.add_argument('-history_learn_power', action='store_true', help='for LSLIF/TLIF only: make history_power learnable')
-    parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike', 'half'], help='for LSLIF/TLIF only: history mode (all, post_spike, or half: shallow post_spike and deep all)')
+    parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF-family/TLIF only: make history_weight learnable')
+    parser.add_argument('-history_weight_lo', type=float, default=-0.8, help='for LSLIF-family/TLIF only: lower bound for learnable history_weight')
+    parser.add_argument('-history_weight_hi', type=float, default=0.8, help='for LSLIF-family/TLIF only: upper bound for learnable history_weight')
+    parser.add_argument('-history_weight_per_step', action='store_true', help='for LSLIF-family/TLIF only: use one learnable history_weight per time-step')
+    parser.add_argument('-history_learn_power', action='store_true', help='for LSLIF-family/TLIF only: make history_power learnable')
+    parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike', 'half'], help='for LSLIF-family/TLIF only: history mode (all, post_spike, or half: shallow post_spike and deep all)')
     parser.add_argument('-tlif_lambda', type=float, default=0.5, help='for TLIF only: per-step threshold growth ratio based on the current-prev threshold gap')
     parser.add_argument('-tlif_theta', type=float, default=None, help='for TLIF only: base threshold interval; defaults to v_threshold')
     parser.add_argument('-tlif_alpha', type=float, default=0.5, help='deprecated for TLIF: ignored by the LSLIF-aligned implementation')
@@ -415,6 +415,8 @@ def main():
         neuron_model = neuron.LSLIF2Neuron
     elif args.neuron_model == 'LSLIF3':
         neuron_model = neuron.LSLIF3Neuron
+    elif args.neuron_model == 'LSLIF4':
+        neuron_model = neuron.LSLIF4Neuron
     elif args.neuron_model == 'RCMLIF':
         neuron_model = neuron.RCMLIFNeuron
     elif args.neuron_model == 'TLIF':
@@ -577,7 +579,7 @@ def main():
 
     if args.neuron_model != 'LIF':
         out_dir += f'_{args.neuron_model}_'
-    if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSLIF3', 'TLIF']:
+    if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSLIF3', 'LSLIF4', 'TLIF']:
         out_dir += (
             f'_hw{args.history_weight}_hp{args.history_power}_he{args.history_eps}_hm{args.history_mode}'
             f'_hlw{int(args.history_learn_weight)}_hps{int(args.history_weight_per_step)}'
