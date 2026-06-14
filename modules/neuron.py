@@ -451,9 +451,10 @@ class LSLIF4Neuron(LSLIFNeuron):
     removed from the primary membrane:
 
       - leakage loss: when ``v`` decays, add the leaked amount to ``n``;
-      - soft reset: after a spike, add one threshold value to ``n``;
-      - hard reset: after a spike, add the whole current primary membrane to
-        ``n``.
+      - soft reset: after a spike, subtract one threshold from the fused
+        firing membrane and add that threshold value to ``n``;
+      - hard reset: after a spike, reset the primary membrane from the fused
+        firing membrane and add that whole fused value to ``n``.
 
     The firing membrane keeps the LSLIF-style fusion
 
@@ -496,9 +497,9 @@ class LSLIF4Neuron(LSLIFNeuron):
         rs = spike.detach() if self.detach_reset else spike
         if self.v_reset is None:
             reset_loss = rs * th_f
-            self.v = v_t - reset_loss
+            self.v = torch.where(rs.bool(), total_mem - reset_loss, v_t)
         else:
-            reset_loss = rs * v_t
+            reset_loss = rs * total_mem
             v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
             self.v = torch.where(rs.bool(), v_reset_t, v_t)
 
