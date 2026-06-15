@@ -6,6 +6,12 @@
 # 4) 如需启用 ASN，可在任意 4D 卷积神经元实验命令后追加：
 #      -asn_enable -asn_p 0.5 -asn_rho 0.5 -asn_seed 2022
 #    如需阻断侧抑制场梯度，再追加：-asn_detach_lateral
+# 5) QKVLIF 专属参数说明（方便调参）：
+#    -qkv_alpha 0.1：注意力上下文注入膜电位的系数，膜电位更新为 total_mem = lif_mem + qkv_alpha * context；越大历史输入影响越强。
+#    -qkv_learn_alpha True：是否让 qkv_alpha 作为可学习参数；True 时训练会自动调整历史注意力强度，False 时固定使用命令行给定值。
+#    -qkv_max_history 0：每个神经元缓存多少个历史时间步；0 表示保留当前样本序列内全部历史，正整数表示只保留最近 K 步以省显存/计算。
+#    -qkv_detach_history False：是否对缓存的历史膜电位和输入 detach；True 会省梯度图显存但切断跨历史步的 attention 梯度。
+#    -qkv_w_q/-qkv_w_k/-qkv_w_v 1.0：Q/K/V 的标量投影初值；-qkv_learn_w True 时会随模型参数一起训练。
 
 ############################################################
 # CIFAR-10
@@ -81,6 +87,10 @@ python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T
 # LSPLIF（特有参数：history 分支 + PLIF 学习 tau）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSPLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# QKVLIF（特有参数：causal QKV history attention；qkv_alpha 控制注意力上下文注入强度）
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model QKVLIF \
+  -qkv_alpha 0.1 -qkv_learn_alpha True -qkv_max_history 0 -qkv_detach_history False
 
 # PLIF（可学习 tau，无额外 CLI 特有参数）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model PLIF
@@ -166,6 +176,10 @@ python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSPLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
+# QKVLIF（特有参数：causal QKV history attention；qkv_alpha 控制注意力上下文注入强度）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model QKVLIF \
+  -qkv_alpha 0.1 -qkv_learn_alpha True -qkv_max_history 0 -qkv_detach_history False
+
 # PLIF（可学习 tau，无额外 CLI 特有参数）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model PLIF
 
@@ -249,6 +263,10 @@ python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13
 # LSPLIF（特有参数：history 分支 + PLIF 学习 tau）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSPLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# QKVLIF（特有参数：causal QKV history attention；qkv_alpha 控制注意力上下文注入强度）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model QKVLIF \
+  -qkv_alpha 0.1 -qkv_learn_alpha True -qkv_max_history 0 -qkv_detach_history False
 
 # PLIF（可学习 tau，无额外 CLI 特有参数）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model PLIF
@@ -334,6 +352,10 @@ python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -m
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSPLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
+# QKVLIF（特有参数：causal QKV history attention；qkv_alpha 控制注意力上下文注入强度）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model QKVLIF \
+  -qkv_alpha 0.1 -qkv_learn_alpha True -qkv_max_history 0 -qkv_detach_history False
+
 # PLIF（可学习 tau，无额外 CLI 特有参数）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model PLIF
 
@@ -417,6 +439,10 @@ python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn
 # LSPLIF（特有参数：history 分支 + PLIF 学习 tau）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSPLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# QKVLIF（特有参数：causal QKV history attention；qkv_alpha 控制注意力上下文注入强度）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model QKVLIF \
+  -qkv_alpha 0.1 -qkv_learn_alpha True -qkv_max_history 0 -qkv_detach_history False
 
 # PLIF（可学习 tau，无额外 CLI 特有参数）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model PLIF
