@@ -124,7 +124,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), ZELIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), ZELIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, QKVLIF, CLIF, PLIF, relu')
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
     parser.add_argument('-asn_enable', action='store_true', help='enable ASN local lateral inhibition on 4D neuron maps')
     parser.add_argument('-asn_p', type=float, default=0.5, help='for ASN only: Bernoulli probability for ASN-like positions')
@@ -157,6 +157,14 @@ def main():
     parser.add_argument('-history_weight_per_step', action='store_true', help='for LSLIF-family/TLIF only: use one learnable history_weight per time-step')
     parser.add_argument('-history_learn_power', action='store_true', help='for LSLIF-family/TLIF only: make history_power learnable')
     parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike', 'half'], help='for LSLIF-family/TLIF only: history mode (all, post_spike, or half: shallow post_spike and deep all)')
+    parser.add_argument('-qkv_alpha', type=float, default=0.1, help='for QKVLIF only: scale for the QKV attention context injected into membrane charging')
+    parser.add_argument('-qkv_learn_alpha', type=bool, default=True, help='for QKVLIF only: make qkv_alpha learnable')
+    parser.add_argument('-qkv_w_q', type=float, default=1.0, help='for QKVLIF only: initial scalar projection weight for Query from current membrane')
+    parser.add_argument('-qkv_w_k', type=float, default=1.0, help='for QKVLIF only: initial scalar projection weight for Key from historical membrane')
+    parser.add_argument('-qkv_w_v', type=float, default=1.0, help='for QKVLIF only: initial scalar projection weight for Value from historical input')
+    parser.add_argument('-qkv_learn_w', type=bool, default=True, help='for QKVLIF only: make q/k/v scalar projection weights learnable')
+    parser.add_argument('-qkv_max_history', type=int, default=0, help='for QKVLIF only: max cached historical steps; 0 keeps all causal history')
+    parser.add_argument('-qkv_detach_history', type=bool, default=False, help='for QKVLIF only: detach cached historical membrane/input tensors')
     parser.add_argument('-tlif_lambda', type=float, default=0.5, help='for TLIF only: per-step threshold growth ratio based on the current-prev threshold gap')
     parser.add_argument('-tlif_theta', type=float, default=None, help='for TLIF only: base threshold interval; defaults to v_threshold')
     parser.add_argument('-tlif_alpha', type=float, default=0.5, help='deprecated for TLIF: ignored by the LSLIF-aligned implementation')
@@ -469,6 +477,8 @@ def main():
         neuron_model = neuron.RCMLIFNeuron
     elif args.neuron_model == 'TLIF':
         neuron_model = neuron.ThresholdLadderLIFNeuron
+    elif args.neuron_model == 'QKVLIF':
+        neuron_model = neuron.QKVLIFNeuron
     elif args.neuron_model == 'CLIF':
         neuron_model = neuron.ComplementaryLIFNeuron
     elif args.neuron_model == 'PLIF':
@@ -544,6 +554,14 @@ def main():
         tlif_w=args.tlif_w,
         tlif_b=args.tlif_b,
         tlif_min_interval=args.tlif_min_interval,
+        qkv_alpha=args.qkv_alpha,
+        qkv_learn_alpha=args.qkv_learn_alpha,
+        qkv_w_q=args.qkv_w_q,
+        qkv_w_k=args.qkv_w_k,
+        qkv_w_v=args.qkv_w_v,
+        qkv_learn_w=args.qkv_learn_w,
+        qkv_max_history=args.qkv_max_history,
+        qkv_detach_history=args.qkv_detach_history,
         asn_enable=args.asn_enable,
         asn_p=args.asn_p,
         asn_rho=args.asn_rho,
@@ -725,6 +743,20 @@ def main():
                 f'tlif_theta{args.tlif_theta}',
                 f'tlif_min_interval{args.tlif_min_interval}',
             ])
+    if args.neuron_model == 'QKVLIF':
+        alpha_can_learn = '是' if args.qkv_learn_alpha else '否'
+        weights_can_learn = '是' if args.qkv_learn_w else '否'
+        detach_history = '是' if args.qkv_detach_history else '否'
+        run_name_parts.extend([
+            f'qkv_alpha{args.qkv_alpha}',
+            f'qkv_alpha可学习{alpha_can_learn}',
+            f'qkv_wq{args.qkv_w_q}',
+            f'qkv_wk{args.qkv_w_k}',
+            f'qkv_wv{args.qkv_w_v}',
+            f'qkv权重可学习{weights_can_learn}',
+            f'qkv最大历史{args.qkv_max_history}',
+            f'qkv历史detach{detach_history}',
+        ])
 
     if args.asn_enable:
         asn_detach = '是' if args.asn_detach_lateral else '否'

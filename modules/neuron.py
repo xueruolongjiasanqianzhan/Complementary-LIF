@@ -376,6 +376,163 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
         return spike.to(dtype=x.dtype)
 
 
+class QKVLIFNeuron(ASNFireMixin, nn.Module):
+    """
+    LIF neuron with a causal QKV attention branch inside membrane charging.
+
+    At each step, the pre-spike membrane after ordinary LIF charging is used as
+    the current query. Historical pre-spike membranes are used as keys, and
+    historical inputs are used as values. The attention context is injected into
+    the current membrane before firing/reset, so the neuron can dynamically recall
+    useful historical inputs while preserving a standard causal SNN interface.
+    """
+
+    def __init__(
+        self,
+        tau: float = 2.0,
+        decay_input: bool = False,
+        v_threshold: float = 1.0,
+        v_reset: Optional[float] = None,
+        surrogate_function: Optional[Callable] = None,
+        detach_reset: bool = False,
+        tau_eps: float = 1e-6,
+        qkv_alpha: float = 0.1,
+        qkv_learn_alpha: bool = True,
+        qkv_w_q: float = 1.0,
+        qkv_w_k: float = 1.0,
+        qkv_w_v: float = 1.0,
+        qkv_learn_w: bool = True,
+        qkv_max_history: int = 0,
+        qkv_detach_history: bool = False,
+        layer_index: Optional[int] = None,
+        asn_enable: bool = False,
+        asn_p: float = 0.5,
+        asn_rho: float = 0.5,
+        asn_seed: int = 2022,
+        asn_detach_lateral: bool = False,
+        **kwargs,
+    ):
+        super().__init__()
+        self.tau = float(tau)
+        self.decay_input = bool(decay_input)
+        self.v_threshold = float(v_threshold)
+        self.v_reset = v_reset
+        self.detach_reset = bool(detach_reset)
+        self.tau_eps = float(tau_eps)
+        self.qkv_max_history = int(max(0, qkv_max_history))
+        self.qkv_detach_history = bool(qkv_detach_history)
+        self.layer_index = int(layer_index) if layer_index is not None else None
+        self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
+        self._init_asn(
+            asn_enable=asn_enable,
+            asn_p=asn_p,
+            asn_rho=asn_rho,
+            asn_seed=asn_seed,
+            asn_detach_lateral=asn_detach_lateral,
+            layer_index=self.layer_index,
+        )
+
+        qkv_weights = {
+            'w_q': float(qkv_w_q),
+            'w_k': float(qkv_w_k),
+            'w_v': float(qkv_w_v),
+        }
+        for name, value in qkv_weights.items():
+            tensor = torch.tensor(value, dtype=torch.float32)
+            if qkv_learn_w:
+                setattr(self, name, nn.Parameter(tensor))
+            else:
+                self.register_buffer(name, tensor)
+        if qkv_learn_alpha:
+            self.qkv_alpha = nn.Parameter(torch.tensor(float(qkv_alpha), dtype=torch.float32))
+        else:
+            self.register_buffer('qkv_alpha', torch.tensor(float(qkv_alpha), dtype=torch.float32))
+
+        self.v = None
+        self.mem_history = []
+        self.input_history = []
+
+    def reset(self):
+        self.v = None
+        self.mem_history = []
+        self.input_history = []
+
+    def _ensure_state(self, x: torch.Tensor):
+        need_init = (
+            self.v is None
+            or self.v.shape != x.shape
+            or self.v.device != x.device
+        )
+        if need_init:
+            self.v = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.mem_history = []
+            self.input_history = []
+
+    def _lif_charge(self, x: torch.Tensor) -> torch.Tensor:
+        tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
+        if self.decay_input:
+            return self.v + (x - self.v) / (tau_eff + self.tau_eps)
+        decay = 1.0 - 1.0 / (tau_eff + self.tau_eps)
+        decay = torch.clamp(decay, 0.0, 1.0)
+        return self.v * decay + x
+
+    def _qkv_context(self, mem_t: torch.Tensor) -> torch.Tensor:
+        if not self.mem_history:
+            return torch.zeros_like(mem_t)
+
+        query = mem_t * self.w_q.to(device=mem_t.device, dtype=mem_t.dtype)
+        keys = torch.stack([
+            h.to(device=mem_t.device, dtype=mem_t.dtype) * self.w_k.to(device=mem_t.device, dtype=mem_t.dtype)
+            for h in self.mem_history
+        ], dim=0)
+        values = torch.stack([
+            h.to(device=mem_t.device, dtype=mem_t.dtype) * self.w_v.to(device=mem_t.device, dtype=mem_t.dtype)
+            for h in self.input_history
+        ], dim=0)
+
+        scores = query.unsqueeze(0) * keys
+        if scores.dim() > 2:
+            scores = scores.flatten(start_dim=2).sum(dim=-1)
+        scale = float(max(1, query[0].numel() if query.dim() > 1 else query.numel())) ** 0.5
+        scores = scores / scale
+        attn = torch.softmax(scores, dim=0)
+        while attn.dim() < values.dim():
+            attn = attn.unsqueeze(-1)
+        return (attn * values).sum(dim=0)
+
+    def _append_history(self, mem_t: torch.Tensor, x_t: torch.Tensor):
+        if self.qkv_detach_history:
+            mem_t = mem_t.detach()
+            x_t = x_t.detach()
+        self.mem_history.append(mem_t)
+        self.input_history.append(x_t)
+        if self.qkv_max_history > 0 and len(self.mem_history) > self.qkv_max_history:
+            self.mem_history = self.mem_history[-self.qkv_max_history:]
+            self.input_history = self.input_history[-self.qkv_max_history:]
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+
+        lif_mem = self._lif_charge(x_f)
+        context = self._qkv_context(lif_mem)
+        alpha = self.qkv_alpha.to(device=lif_mem.device, dtype=lif_mem.dtype)
+        total_mem = lif_mem + alpha * context
+
+        th_f = torch.as_tensor(self.v_threshold, device=total_mem.device, dtype=total_mem.dtype)
+        spike = self._asn_fire(total_mem, th_f)
+
+        rs = spike.detach() if self.detach_reset else spike
+        if self.v_reset is None:
+            self.v = total_mem - rs * th_f
+        else:
+            v_reset_t = torch.as_tensor(self.v_reset, device=total_mem.device, dtype=total_mem.dtype)
+            self.v = torch.where(rs.bool(), v_reset_t, total_mem)
+
+        self._append_history(lif_mem, x_f)
+        return spike.to(dtype=x.dtype)
+
+
 class LSLIF3Neuron(LSLIFNeuron):
     """
     LSLIF variant that keeps only the auxiliary history branch.

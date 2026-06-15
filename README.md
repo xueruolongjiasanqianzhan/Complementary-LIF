@@ -70,7 +70,17 @@ LSLIF4 uses the same dataset/model commands; only switch the neuron option to ``
     # DVS-Gesture with LSLIF4
     python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF4
 
-If you change the neuron, you can switch with ``-neuron_model`` among ``LIF`` (vanilla), ``newLIF`` (adaptive tau), ``newLIFTauDep``, ``newCLIF``, ``DTLIF``, ``DGN``, ``LIFDGN``, ``LSLIF``, ``LSLIF2``, ``LSLIF3``, ``LSLIF4``, ``CLIF``, ``PLIF``, and ``relu``.
+If you change the neuron, you can switch with ``-neuron_model`` among ``LIF`` (vanilla), ``newLIF`` (adaptive tau), ``newLIFTauDep``, ``newCLIF``, ``DTLIF``, ``DGN``, ``LIFDGN``, ``LSLIF``, ``LSLIF2``, ``LSLIF3``, ``LSLIF4``, ``QKVLIF``, ``CLIF``, ``PLIF``, and ``relu``.
+
+QKVLIF adds a causal QKV attention branch inside membrane charging. Its tunable
+CLI parameters are ``-qkv_alpha`` (attention context scale in
+``total_mem = lif_mem + qkv_alpha * context``), ``-qkv_learn_alpha`` (whether
+that scale is learnable), ``-qkv_w_q``, ``-qkv_w_k``, and ``-qkv_w_v``
+(initial scalar Q/K/V projection weights), ``-qkv_learn_w`` (whether those
+projection weights are learnable),
+``-qkv_max_history`` (0 keeps all causal history; positive values keep only the
+latest K steps), and ``-qkv_detach_history`` (detach cached historical
+membranes/inputs to save gradient memory).
 
 For example to setup LIF neuron for CIFAR-10 task:
 
