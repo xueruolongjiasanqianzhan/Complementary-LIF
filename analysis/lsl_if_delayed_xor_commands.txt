@@ -1,0 +1,12 @@
+# LSLIF ROX/delayed-spiking-XOR experiment copied in spirit from DH-SNN/delayed_xor,
+# but implemented outside DH-SNN so the vendored files stay unchanged.
+
+# Protocol-matched LSLIF run (DH-SNN defaults: T=200, channels=20, coding_time=10,
+# noise=0.01, hidden=16, batch=500, lr=1e-2, 150 epochs, 100 generated batches/epoch).
+python analysis/lsl_if_delayed_xor.py --neuron lslif --save-best
+
+# Local vanilla LIF control under the same generator/training protocol.
+python analysis/lsl_if_delayed_xor.py --neuron lif --save-best
+
+# Fast smoke test (not for reporting accuracy).
+python analysis/lsl_if_delayed_xor.py --neuron lslif --epochs 1 --batches-per-epoch 1 --batch-size 4 --hidden-dims 4 --device cpu
