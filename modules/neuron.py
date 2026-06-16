@@ -380,8 +380,8 @@ class QKVLIFNeuron(ASNFireMixin, nn.Module):
     """
     LIF neuron with a causal QKV attention branch inside membrane charging.
 
-    At each step, the pre-spike membrane after ordinary LIF charging is used as
-    the current query. Historical pre-spike membranes are used as keys, and
+    At each step, the residual membrane before injecting the current input is used
+    as the current query. Historical residual membranes are used as keys, and
     historical inputs are used as values. The attention context is injected into
     the current membrane before firing/reset, so the neuron can dynamically recall
     useful historical inputs while preserving a standard causal SNN interface.
@@ -468,13 +468,21 @@ class QKVLIFNeuron(ASNFireMixin, nn.Module):
             self.mem_history = []
             self.input_history = []
 
-    def _lif_charge(self, x: torch.Tensor) -> torch.Tensor:
+    def _lif_residual(self) -> torch.Tensor:
         tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
         if self.decay_input:
-            return self.v + (x - self.v) / (tau_eff + self.tau_eps)
+            return self.v - self.v / (tau_eff + self.tau_eps)
         decay = 1.0 - 1.0 / (tau_eff + self.tau_eps)
         decay = torch.clamp(decay, 0.0, 1.0)
-        return self.v * decay + x
+        return self.v * decay
+
+    def _lif_charge(self, x: torch.Tensor, residual_mem: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if residual_mem is None:
+            residual_mem = self._lif_residual()
+        if self.decay_input:
+            tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
+            return residual_mem + x / (tau_eff + self.tau_eps)
+        return residual_mem + x
 
     def _qkv_context(self, mem_t: torch.Tensor) -> torch.Tensor:
         if not self.mem_history:
@@ -514,8 +522,9 @@ class QKVLIFNeuron(ASNFireMixin, nn.Module):
         self._ensure_state(x)
         x_f = x.to(torch.float32)
 
-        lif_mem = self._lif_charge(x_f)
-        context = self._qkv_context(lif_mem)
+        residual_mem = self._lif_residual()
+        lif_mem = self._lif_charge(x_f, residual_mem)
+        context = self._qkv_context(residual_mem)
         alpha = self.qkv_alpha.to(device=lif_mem.device, dtype=lif_mem.dtype)
         total_mem = lif_mem + alpha * context
 
@@ -529,7 +538,7 @@ class QKVLIFNeuron(ASNFireMixin, nn.Module):
             v_reset_t = torch.as_tensor(self.v_reset, device=total_mem.device, dtype=total_mem.dtype)
             self.v = torch.where(rs.bool(), v_reset_t, total_mem)
 
-        self._append_history(lif_mem, x_f)
+        self._append_history(residual_mem, x_f)
         return spike.to(dtype=x.dtype)
 
 
