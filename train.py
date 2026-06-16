@@ -132,6 +132,13 @@ def main():
     parser.add_argument('-asn_rho', type=float, default=0.5, help='for ASN only: local lateral inhibition strength')
     parser.add_argument('-asn_seed', type=int, default=2022, help='for ASN only: deterministic mask seed')
     parser.add_argument('-asn_detach_lateral', action='store_true', help='for ASN only: detach ASN spikes before forming lateral field')
+    parser.add_argument('-success_modulation_enable', action='store_true', help='enable epoch-level success-correlated neuronal modulation')
+    parser.add_argument('-success_modulation_gamma', type=float, default=0.05, help='success modulation membrane scale')
+    parser.add_argument('-success_modulation_mu', type=float, default=0.05, help='success modulation epoch EMA factor')
+    parser.add_argument('-success_modulation_q_max', type=float, default=0.1, help='success modulation Q clipping range')
+    parser.add_argument('-success_modulation_delta', type=float, default=0.0, help='success modulation dead-zone threshold')
+    parser.add_argument('-success_modulation_warmup_epochs', type=int, default=5, help='epochs before success modulation affects firing')
+    parser.add_argument('-success_modulation_min_count', type=int, default=1, help='minimum success/fail sample-time count for Q update')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('--ddp', action='store_true', help='enable DDP training when launched with torchrun')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
@@ -568,6 +575,13 @@ def main():
         asn_rho=args.asn_rho,
         asn_seed=args.asn_seed,
         asn_detach_lateral=args.asn_detach_lateral,
+        success_modulation_enable=args.success_modulation_enable,
+        success_modulation_gamma=args.success_modulation_gamma,
+        success_modulation_mu=args.success_modulation_mu,
+        success_modulation_q_max=args.success_modulation_q_max,
+        success_modulation_delta=args.success_modulation_delta,
+        success_modulation_warmup_epochs=args.success_modulation_warmup_epochs,
+        success_modulation_min_count=args.success_modulation_min_count,
     )
     if args.neuron_model == 'ZELIF':
         neuron_kwargs['zelif_alpha'] = args.zelif_alpha
@@ -787,6 +801,16 @@ def main():
             f'ASN侧抑制detach{asn_detach}',
         ])
 
+    if args.success_modulation_enable:
+        run_name_parts.extend([
+            f'SuccessMod_gamma{args.success_modulation_gamma}',
+            f'SuccessMod_mu{args.success_modulation_mu}',
+            f'SuccessMod_qmax{args.success_modulation_q_max}',
+            f'SuccessMod_delta{args.success_modulation_delta}',
+            f'SuccessMod_warmup{args.success_modulation_warmup_epochs}',
+            f'SuccessMod_mincount{args.success_modulation_min_count}',
+        ])
+
     if args.name:
         run_name_parts.append(f'备注{args.name}')
 
@@ -865,6 +889,8 @@ def main():
         ############### training ###############
         start_time = time.time()
         net.train()
+        neuron.set_epoch(net, epoch)
+        neuron.reset_epoch_stats(net)
 
         batch_time = AverageMeter()
         data_time = AverageMeter()
@@ -971,6 +997,11 @@ def main():
             train_samples += label.numel()
             train_acc += (total_fr.argmax(1) == label).float().sum().item()
 
+            with torch.no_grad():
+                pred = total_fr.argmax(dim=1)
+                correct_mask = pred.eq(label)
+                neuron.update_success_stats(net, correct_mask)
+
             functional.reset_net(net)
 
             # measure elapsed time
@@ -998,6 +1029,9 @@ def main():
         if writer is not None:
             writer.add_scalar('train_loss', train_loss, epoch)
             writer.add_scalar('train_acc', train_acc, epoch)
+        with torch.no_grad():
+            neuron.finalize_epoch_stats(net)
+
         lr_scheduler.step()
 
         ############### testing ###############
