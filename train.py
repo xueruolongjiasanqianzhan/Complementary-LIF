@@ -109,6 +109,7 @@ def main():
     parser.add_argument('-surrogate', default='rectangle', type=str, help='used surrogate function. should be sigmoid, rectangle, or triangle')
     parser.add_argument('-resume', type=str, help='resume from the checkpoint path')
     parser.add_argument('-pre_train', type=str, help='load a pretrained model. used for imagenet')
+    parser.add_argument('-pre_train_strict', action='store_true', help='strictly require all pretrained parameter names and shapes to match')
     parser.add_argument('-amp', default=True, type=bool, help='automatic mixed precision training')
     parser.add_argument('-opt', type=str, help='use which optimizer. SGD or AdamW', default='SGD')
     parser.add_argument('-lr', default=0.1, type=float, help='learning rate')
@@ -641,9 +642,28 @@ def main():
 
     if args.pre_train:
         checkpoint = torch.load(args.pre_train, map_location='cpu')
-        state_dict2 = collections.OrderedDict([(k, v) for k, v in checkpoint['net'].items()])
-        net.load_state_dict(state_dict2)
-        print('use pre-trained model, max test acc:', checkpoint['max_test_acc'])
+        pretrained_state = collections.OrderedDict([(k, v) for k, v in checkpoint['net'].items()])
+        if args.pre_train_strict:
+            net.load_state_dict(pretrained_state)
+            print('use pre-trained model with strict loading, max test acc:', checkpoint.get('max_test_acc', 'unknown'))
+        else:
+            current_state = net.state_dict()
+            compatible_state = collections.OrderedDict()
+            skipped_state = []
+            for key, value in pretrained_state.items():
+                if key in current_state and current_state[key].shape == value.shape:
+                    compatible_state[key] = value
+                else:
+                    skipped_state.append(key)
+            current_state.update(compatible_state)
+            net.load_state_dict(current_state)
+            missing_keys = [key for key in current_state.keys() if key not in compatible_state]
+            print('use compatible pre-trained parameters, max test acc:', checkpoint.get('max_test_acc', 'unknown'))
+            print(f'loaded compatible parameter tensors: {len(compatible_state)} / {len(current_state)}')
+            if skipped_state:
+                print(f'skipped incompatible or unexpected pretrained tensors: {len(skipped_state)}')
+            if missing_keys:
+                print(f'kept current initialization for tensors not loaded: {len(missing_keys)}')
 
     ##########################################################
     # output setting
