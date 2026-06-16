@@ -10,6 +10,18 @@ from torch import nn
 from modules.surrogate import Rectangle
 
 
+def _success_modulation_kwargs(kwargs):
+    return dict(
+        success_modulation_enable=kwargs.get('success_modulation_enable', False),
+        success_modulation_gamma=kwargs.get('success_modulation_gamma', 0.05),
+        success_modulation_mu=kwargs.get('success_modulation_mu', 0.05),
+        success_modulation_q_max=kwargs.get('success_modulation_q_max', 0.1),
+        success_modulation_delta=kwargs.get('success_modulation_delta', 0.0),
+        success_modulation_warmup_epochs=kwargs.get('success_modulation_warmup_epochs', 5),
+        success_modulation_min_count=kwargs.get('success_modulation_min_count', 1),
+    )
+
+
 class SuccessModulationMixin:
     """Epoch-level success-correlated neuronal modulation.
 
@@ -182,15 +194,7 @@ class ASNFireMixin(SuccessModulationMixin):
         base_kernel = torch.ones((1, 1, 3, 3), dtype=torch.float32) / 8.0
         base_kernel[..., 1, 1] = 0.0
         self.register_buffer('asn_kernel_base', base_kernel, persistent=False)
-        self._init_success_modulation(
-            success_modulation_enable=kwargs.get('success_modulation_enable', False),
-            success_modulation_gamma=kwargs.get('success_modulation_gamma', 0.05),
-            success_modulation_mu=kwargs.get('success_modulation_mu', 0.05),
-            success_modulation_q_max=kwargs.get('success_modulation_q_max', 0.1),
-            success_modulation_delta=kwargs.get('success_modulation_delta', 0.0),
-            success_modulation_warmup_epochs=kwargs.get('success_modulation_warmup_epochs', 5),
-            success_modulation_min_count=kwargs.get('success_modulation_min_count', 1),
-        )
+        self._init_success_modulation(**_success_modulation_kwargs(kwargs))
 
     def _asn_build_mask(self, mem: torch.Tensor) -> torch.Tensor:
         c, h, w = int(mem.shape[1]), int(mem.shape[2]), int(mem.shape[3])
@@ -265,7 +269,7 @@ class ComplementaryLIFNeuron(ASNFireMixin, LIFNode_sj):
             asn_seed=kwargs.get('asn_seed', 2022),
             asn_detach_lateral=kwargs.get('asn_detach_lateral', False),
             layer_index=kwargs.get('layer_index', None),
-            **kwargs,
+            **_success_modulation_kwargs(kwargs),
         )
         self.register_memory('m', 0.)  # Complementary memory
 
@@ -419,7 +423,7 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
             asn_seed=asn_seed,
             asn_detach_lateral=asn_detach_lateral,
             layer_index=self.layer_index,
-            **kwargs,
+            **_success_modulation_kwargs(kwargs),
         )
 
         def _inv_sigmoid(x: float) -> float:
@@ -584,7 +588,7 @@ class QKVLIFNeuron(ASNFireMixin, nn.Module):
             asn_seed=asn_seed,
             asn_detach_lateral=asn_detach_lateral,
             layer_index=self.layer_index,
-            **kwargs,
+            **_success_modulation_kwargs(kwargs),
         )
 
         qkv_weights = {
@@ -1077,7 +1081,7 @@ class ThresholdLadderLIFNeuron(LSLIFNeuron):
             asn_rho=asn_rho,
             asn_seed=asn_seed,
             asn_detach_lateral=asn_detach_lateral,
-            **kwargs,
+            **_success_modulation_kwargs(kwargs),
         )
         self.tlif_lambda = float(tlif_lambda)
         if not 0.0 <= self.tlif_lambda <= 1.0:
@@ -1230,7 +1234,7 @@ class RCMLIFNeuron(ASNFireMixin, nn.Module):
             asn_seed=asn_seed,
             asn_detach_lateral=asn_detach_lateral,
             layer_index=self.layer_index,
-            **kwargs,
+            **_success_modulation_kwargs(kwargs),
         )
 
         if self.rcm_learn_eta:
@@ -1327,7 +1331,7 @@ class VanillaLIFNeuron(ASNFireMixin, LIFNode_sj):
             asn_seed=kwargs.get('asn_seed', 2022),
             asn_detach_lateral=kwargs.get('asn_detach_lateral', False),
             layer_index=kwargs.get('layer_index', None),
-            **kwargs,
+            **_success_modulation_kwargs(kwargs),
         )
 
     def forward(self, x: torch.Tensor):
@@ -1335,6 +1339,7 @@ class VanillaLIFNeuron(ASNFireMixin, LIFNode_sj):
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
         spike = self._success_fire(self.v, th_f)
         LIFNode_sj.neuronal_reset(self, spike)
+        self._cache_success_spike(spike)
         return spike
 
 
@@ -1444,7 +1449,7 @@ class BPTTNeuron(SuccessModulationMixin, nn.Module):
         **kwargs,
     ):
         super().__init__()
-        self._init_success_modulation(**kwargs)
+        self._init_success_modulation(**_success_modulation_kwargs(kwargs))
         self.tau0 = float(tau)
         self.decay_input = bool(decay_input)
         self.v_threshold = float(v_threshold)
@@ -1671,7 +1676,7 @@ class DTLIFNeuron(SuccessModulationMixin, nn.Module):
         **kwargs,
     ):
         super().__init__()
-        self._init_success_modulation(**kwargs)
+        self._init_success_modulation(**_success_modulation_kwargs(kwargs))
         self.tau0 = float(tau)
         self.decay_input = bool(decay_input)
         self.v_threshold = float(v_threshold)
@@ -1789,7 +1794,7 @@ class DGNNeuron(SuccessModulationMixin, nn.Module):
         **kwargs,
     ):
         super().__init__()
-        self._init_success_modulation(**kwargs)
+        self._init_success_modulation(**_success_modulation_kwargs(kwargs))
         self.tau_s = float(tau)
         self.decay_input = bool(decay_input)
         self.v_threshold = float(v_threshold)
@@ -1919,7 +1924,7 @@ class LIFDGNNeuron(SuccessModulationMixin, nn.Module):
         **kwargs,
     ):
         super().__init__()
-        self._init_success_modulation(**kwargs)
+        self._init_success_modulation(**_success_modulation_kwargs(kwargs))
         self.tau0 = float(tau)
         self.decay_input = bool(decay_input)
         self.v_threshold = float(v_threshold)
