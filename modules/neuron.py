@@ -10,7 +10,150 @@ from torch import nn
 from modules.surrogate import Rectangle
 
 
-class ASNFireMixin:
+class SuccessModulationMixin:
+    """Epoch-level success-correlated neuronal modulation.
+
+    Q and all spike-rate accumulators are buffers/statistics only; they never
+    participate in gradient updates or loss computation.
+    """
+
+    def _init_success_modulation(
+        self,
+        success_modulation_enable: bool = False,
+        success_modulation_gamma: float = 0.05,
+        success_modulation_mu: float = 0.05,
+        success_modulation_q_max: float = 0.1,
+        success_modulation_delta: float = 0.0,
+        success_modulation_warmup_epochs: int = 5,
+        success_modulation_min_count: int = 1,
+    ):
+        self.success_modulation_enable = bool(success_modulation_enable)
+        self.success_modulation_gamma = float(success_modulation_gamma)
+        self.success_modulation_mu = float(success_modulation_mu)
+        self.success_modulation_q_max = float(success_modulation_q_max)
+        self.success_modulation_delta = float(success_modulation_delta)
+        self.success_modulation_warmup_epochs = int(success_modulation_warmup_epochs)
+        self.success_modulation_min_count = int(success_modulation_min_count)
+        self.success_modulation_epoch = 0
+        self._success_cached_spikes = []
+        self.success_count = 0.0
+        self.fail_count = 0.0
+        self.register_buffer('Q', None)
+        self.register_buffer('success_spike_sum', None)
+        self.register_buffer('fail_spike_sum', None)
+
+    def _ensure_success_buffers(self, spike_or_mem: torch.Tensor):
+        if not self.success_modulation_enable or spike_or_mem.dim() < 2:
+            return
+        q_shape = (1,) + tuple(spike_or_mem.shape[1:])
+        sum_shape = tuple(spike_or_mem.shape[1:])
+        need_new = self.Q is None or tuple(self.Q.shape) != q_shape or self.Q.device != spike_or_mem.device
+        if need_new:
+            self.Q = torch.zeros(q_shape, device=spike_or_mem.device, dtype=torch.float32)
+            self.success_spike_sum = torch.zeros(sum_shape, device=spike_or_mem.device, dtype=torch.float32)
+            self.fail_spike_sum = torch.zeros(sum_shape, device=spike_or_mem.device, dtype=torch.float32)
+            self.success_count = 0.0
+            self.fail_count = 0.0
+
+    def _success_modulation(self, mem: torch.Tensor) -> torch.Tensor:
+        if (not self.success_modulation_enable) or self.success_modulation_epoch < self.success_modulation_warmup_epochs:
+            return torch.zeros_like(mem)
+        self._ensure_success_buffers(mem)
+        if self.Q is None:
+            return torch.zeros_like(mem)
+        q = self.Q.to(device=mem.device, dtype=mem.dtype)
+        if self.success_modulation_delta > 0.0:
+            q = torch.sign(q) * torch.relu(torch.abs(q) - self.success_modulation_delta)
+        q = torch.clamp(q, -self.success_modulation_q_max, self.success_modulation_q_max)
+        return self.success_modulation_gamma * q
+
+    def _success_fire(self, mem: torch.Tensor, threshold: torch.Tensor) -> torch.Tensor:
+        return self._asn_fire(mem + self._success_modulation(mem), threshold)
+
+    def _cache_success_spike(self, spike: torch.Tensor):
+        if self.success_modulation_enable and self.training:
+            self._ensure_success_buffers(spike)
+            self._success_cached_spikes.append(spike.detach())
+
+    def set_epoch(self, epoch: int):
+        self.success_modulation_epoch = int(epoch)
+
+    def clear_cached_spikes(self):
+        self._success_cached_spikes = []
+
+    def reset_epoch_stats(self):
+        if self.success_spike_sum is not None:
+            self.success_spike_sum.zero_()
+        if self.fail_spike_sum is not None:
+            self.fail_spike_sum.zero_()
+        self.success_count = 0.0
+        self.fail_count = 0.0
+        self.clear_cached_spikes()
+
+    @torch.no_grad()
+    def update_success_stats(self, correct_mask: torch.Tensor):
+        if (not self.success_modulation_enable) or (not self.training) or not self._success_cached_spikes:
+            self.clear_cached_spikes()
+            return
+        spike_seq = torch.stack(self._success_cached_spikes, dim=0).detach().float()
+        self.clear_cached_spikes()
+        correct_mask = correct_mask.to(device=spike_seq.device, dtype=torch.bool)
+        if spike_seq.shape[1] != correct_mask.numel():
+            return
+        self._ensure_success_buffers(spike_seq[0])
+        T = spike_seq.shape[0]
+        if correct_mask.any():
+            self.success_spike_sum += spike_seq[:, correct_mask].sum(dim=(0, 1))
+            self.success_count += float(correct_mask.sum().item() * T)
+        fail_mask = ~correct_mask
+        if fail_mask.any():
+            self.fail_spike_sum += spike_seq[:, fail_mask].sum(dim=(0, 1))
+            self.fail_count += float(fail_mask.sum().item() * T)
+
+    @torch.no_grad()
+    def finalize_epoch_stats(self):
+        if not self.success_modulation_enable:
+            return
+        if (self.Q is not None and self.success_spike_sum is not None and self.fail_spike_sum is not None
+                and self.success_count >= self.success_modulation_min_count
+                and self.fail_count >= self.success_modulation_min_count):
+            p_pos = self.success_spike_sum / max(self.success_count, 1.0)
+            p_neg = self.fail_spike_sum / max(self.fail_count, 1.0)
+            q = (p_pos - p_neg).reshape_as(self.Q)
+            self.Q.mul_(1.0 - self.success_modulation_mu).add_(q, alpha=self.success_modulation_mu)
+            self.Q.clamp_(-self.success_modulation_q_max, self.success_modulation_q_max)
+        self.reset_epoch_stats()
+
+
+def _iter_success_modules(model: nn.Module):
+    for module in model.modules():
+        if hasattr(module, 'update_success_stats') and getattr(module, 'success_modulation_enable', False):
+            yield module
+
+
+def set_epoch(model: nn.Module, epoch: int):
+    for module in _iter_success_modules(model):
+        module.set_epoch(epoch)
+
+
+def reset_epoch_stats(model: nn.Module):
+    for module in _iter_success_modules(model):
+        module.reset_epoch_stats()
+
+
+@torch.no_grad()
+def update_success_stats(model: nn.Module, correct_mask: torch.Tensor):
+    for module in _iter_success_modules(model):
+        module.update_success_stats(correct_mask)
+
+
+@torch.no_grad()
+def finalize_epoch_stats(model: nn.Module):
+    for module in _iter_success_modules(model):
+        module.finalize_epoch_stats()
+
+
+class ASNFireMixin(SuccessModulationMixin):
     """Optional ASN-style local lateral inhibition for 4D spike maps.
 
     The mixin is intentionally inert unless ``asn_enable`` is true so existing
@@ -25,6 +168,7 @@ class ASNFireMixin:
         asn_seed: int = 2022,
         asn_detach_lateral: bool = False,
         layer_index: Optional[int] = None,
+        **kwargs,
     ):
         self.asn_enable = bool(asn_enable)
         self.asn_p = float(asn_p)
@@ -38,6 +182,15 @@ class ASNFireMixin:
         base_kernel = torch.ones((1, 1, 3, 3), dtype=torch.float32) / 8.0
         base_kernel[..., 1, 1] = 0.0
         self.register_buffer('asn_kernel_base', base_kernel, persistent=False)
+        self._init_success_modulation(
+            success_modulation_enable=kwargs.get('success_modulation_enable', False),
+            success_modulation_gamma=kwargs.get('success_modulation_gamma', 0.05),
+            success_modulation_mu=kwargs.get('success_modulation_mu', 0.05),
+            success_modulation_q_max=kwargs.get('success_modulation_q_max', 0.1),
+            success_modulation_delta=kwargs.get('success_modulation_delta', 0.0),
+            success_modulation_warmup_epochs=kwargs.get('success_modulation_warmup_epochs', 5),
+            success_modulation_min_count=kwargs.get('success_modulation_min_count', 1),
+        )
 
     def _asn_build_mask(self, mem: torch.Tensor) -> torch.Tensor:
         c, h, w = int(mem.shape[1]), int(mem.shape[2]), int(mem.shape[3])
@@ -112,20 +265,19 @@ class ComplementaryLIFNeuron(ASNFireMixin, LIFNode_sj):
             asn_seed=kwargs.get('asn_seed', 2022),
             asn_detach_lateral=kwargs.get('asn_detach_lateral', False),
             layer_index=kwargs.get('layer_index', None),
+            **kwargs,
         )
         self.register_memory('m', 0.)  # Complementary memory
 
     def forward(self, x: torch.Tensor):
         self.neuronal_charge(x)  # LIF charging
         self.m = self.m * torch.sigmoid(self.v / self.tau)  # Forming
-        if self.asn_enable:
-            th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-            spike = self._asn_fire(self.v, th_f)  # LIF fire with ASN
-        else:
-            spike = self.neuronal_fire()  # LIF fire
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+        spike = self._success_fire(self.v, th_f)  # LIF fire with optional ASN/success modulation
         self.m += spike  # Strengthen
         self.neuronal_reset(spike)  # LIF reset
         self.v = self.v - spike * torch.sigmoid(self.m)  # Reset
+        self._cache_success_spike(spike)
         return spike
 
     def neuronal_charge(self, x: torch.Tensor):
@@ -267,6 +419,7 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
             asn_seed=asn_seed,
             asn_detach_lateral=asn_detach_lateral,
             layer_index=self.layer_index,
+            **kwargs,
         )
 
         def _inv_sigmoid(x: float) -> float:
@@ -362,7 +515,7 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
         total_mem = m_t + history_term
 
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-        spike = self._asn_fire(total_mem, th_f)
+        spike = self._success_fire(total_mem, th_f)
 
         rs = spike.detach() if self.detach_reset else spike
         if self.v_reset is None:
@@ -373,6 +526,7 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
 
         self.n = n_t
         self.has_fired = torch.logical_or(self.has_fired, rs.bool())
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
@@ -430,6 +584,7 @@ class QKVLIFNeuron(ASNFireMixin, nn.Module):
             asn_seed=asn_seed,
             asn_detach_lateral=asn_detach_lateral,
             layer_index=self.layer_index,
+            **kwargs,
         )
 
         qkv_weights = {
@@ -529,7 +684,7 @@ class QKVLIFNeuron(ASNFireMixin, nn.Module):
         total_mem = lif_mem + alpha * context
 
         th_f = torch.as_tensor(self.v_threshold, device=total_mem.device, dtype=total_mem.dtype)
-        spike = self._asn_fire(total_mem, th_f)
+        spike = self._success_fire(total_mem, th_f)
 
         rs = spike.detach() if self.detach_reset else spike
         if self.v_reset is None:
@@ -539,6 +694,7 @@ class QKVLIFNeuron(ASNFireMixin, nn.Module):
             self.v = torch.where(rs.bool(), v_reset_t, total_mem)
 
         self._append_history(residual_mem, x_f)
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
@@ -599,11 +755,12 @@ class LSLIF3Neuron(LSLIFNeuron):
             total_mem = total_mem * self.has_fired.to(dtype=total_mem.dtype)
 
         th_f = torch.as_tensor(self.v_threshold, device=self.n.device, dtype=self.n.dtype)
-        spike = self._asn_fire(total_mem, th_f)
+        spike = self._success_fire(total_mem, th_f)
 
         rs = spike.detach() if self.detach_reset else spike
         self.n = n_t
         self.has_fired = torch.logical_or(self.has_fired, rs.bool())
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
@@ -658,7 +815,7 @@ class LSLIF4Neuron(LSLIFNeuron):
         total_mem = v_t + history_term
 
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-        spike = self._asn_fire(total_mem, th_f)
+        spike = self._success_fire(total_mem, th_f)
 
         rs = spike.detach() if self.detach_reset else spike
         if self.v_reset is None:
@@ -671,6 +828,7 @@ class LSLIF4Neuron(LSLIFNeuron):
 
         self.n = n_t + reset_loss
         self.has_fired = torch.logical_or(self.has_fired, rs.bool())
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
@@ -749,13 +907,14 @@ class LSLIF2Neuron(LSLIFNeuron):
         total_mem = m_t + history_term
 
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-        spike = self._asn_fire(total_mem, th_f)
+        spike = self._success_fire(total_mem, th_f)
 
         rs = spike.detach() if self.detach_reset else spike
         self.history_state = residual_mem + rs * (total_mem - th_f)
         self.v = m_t * (1.0 - rs)
 
         self.has_fired = torch.logical_or(self.has_fired, rs.bool())
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
@@ -815,7 +974,7 @@ class LSCLIFNeuron(LSLIFNeuron):
         # CLIF complementary memory forming/strengthening
         self.m = self.m * torch.sigmoid(v_t / (tau_eff + self.tau_eps))
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-        spike = self._asn_fire(total_mem, th_f)
+        spike = self._success_fire(total_mem, th_f)
         self.m = self.m + spike
 
         rs = spike.detach() if self.detach_reset else spike
@@ -830,6 +989,7 @@ class LSCLIFNeuron(LSLIFNeuron):
 
         self.n = n_t
         self.has_fired = torch.logical_or(self.has_fired, rs.bool())
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
@@ -973,7 +1133,7 @@ class ThresholdLadderLIFNeuron(LSLIFNeuron):
         v_t = self.v + x_f
         theta_time = self.theta + lambda_t * (self.theta - self.b_base)
 
-        spike = self._asn_fire(v_t, theta_time)
+        spike = self._success_fire(v_t, theta_time)
         rs = spike.detach() if self.detach_reset else spike
         rs_f = rs.to(dtype=v_t.dtype)
 
@@ -997,6 +1157,7 @@ class ThresholdLadderLIFNeuron(LSLIFNeuron):
         self.b_base = b_next
         self.theta = theta_next
         self.has_fired = torch.logical_or(self.has_fired, rs.bool())
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
@@ -1069,6 +1230,7 @@ class RCMLIFNeuron(ASNFireMixin, nn.Module):
             asn_seed=asn_seed,
             asn_detach_lateral=asn_detach_lateral,
             layer_index=self.layer_index,
+            **kwargs,
         )
 
         if self.rcm_learn_eta:
@@ -1135,7 +1297,7 @@ class RCMLIFNeuron(ASNFireMixin, nn.Module):
         total_mem = m_t + beta * self._rcm_transform(self.r, self.step_count)
 
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-        spike = self._asn_fire(total_mem, th_f)
+        spike = self._success_fire(total_mem, th_f)
 
         rs = spike.detach() if self.detach_reset else spike
         if self.v_reset is None:
@@ -1149,6 +1311,7 @@ class RCMLIFNeuron(ASNFireMixin, nn.Module):
         lambda_r = torch.as_tensor(self.rcm_lambda, dtype=m_t.dtype, device=m_t.device)
         self.r = lambda_r * self.r + eta * reset_loss
         self.v = v_next
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
@@ -1164,14 +1327,13 @@ class VanillaLIFNeuron(ASNFireMixin, LIFNode_sj):
             asn_seed=kwargs.get('asn_seed', 2022),
             asn_detach_lateral=kwargs.get('asn_detach_lateral', False),
             layer_index=kwargs.get('layer_index', None),
+            **kwargs,
         )
 
     def forward(self, x: torch.Tensor):
-        if not self.asn_enable:
-            return super().forward(x)
         LIFNode_sj.neuronal_charge(self, x)
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-        spike = self._asn_fire(self.v, th_f)
+        spike = self._success_fire(self.v, th_f)
         LIFNode_sj.neuronal_reset(self, spike)
         return spike
 
@@ -1251,7 +1413,7 @@ class ZELIFNeuron(VanillaLIFNeuron):
     def forward(self, x: torch.Tensor):
         return super().forward(x + self._pattern_branch(x))
 
-class BPTTNeuron(nn.Module):
+class BPTTNeuron(SuccessModulationMixin, nn.Module):
     """
     Baseline LIF with surrogate gradient and membrane state v (fp32).
 
@@ -1282,6 +1444,7 @@ class BPTTNeuron(nn.Module):
         **kwargs,
     ):
         super().__init__()
+        self._init_success_modulation(**kwargs)
         self.tau0 = float(tau)
         self.decay_input = bool(decay_input)
         self.v_threshold = float(v_threshold)
@@ -1375,7 +1538,7 @@ class BPTTNeuron(nn.Module):
             self.v = self.v * decay + x_f
 
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-        spike = self.surrogate_function(self.v - th_f)
+        spike = self.surrogate_function(self.v + self._success_modulation(self.v) - th_f)
 
         rs = spike.detach() if self.detach_reset else spike
         if self.v_reset is None:
@@ -1390,6 +1553,7 @@ class BPTTNeuron(nn.Module):
             step = s * (self.tau_eta * alpha_down) - (1.0 - s) * (self.tau_eta * alpha_up)
             self.log_tau_state = (self.log_tau_state + step).clamp(self._log_tau_lo, self._log_tau_hi)
 
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
@@ -1447,7 +1611,7 @@ class BPTTNeuronTauDependent(BPTTNeuron):
             self.v = self.v * decay + x_f
 
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-        spike = self.surrogate_function(self.v - th_f)
+        spike = self.surrogate_function(self.v + self._success_modulation(self.v) - th_f)
 
         rs = spike.detach() if self.detach_reset else spike
         if self.v_reset is None:
@@ -1468,10 +1632,11 @@ class BPTTNeuronTauDependent(BPTTNeuron):
             tau_next = tau_next.clamp(min=self.tau_lo, max=self.tau_hi)
             self.log_tau_state = torch.log(tau_next)
 
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
-class DTLIFNeuron(nn.Module):
+class DTLIFNeuron(SuccessModulationMixin, nn.Module):
     """
     Dynamic-Tau-Like LIF with direct rho update (refractory-style).
 
@@ -1506,6 +1671,7 @@ class DTLIFNeuron(nn.Module):
         **kwargs,
     ):
         super().__init__()
+        self._init_success_modulation(**kwargs)
         self.tau0 = float(tau)
         self.decay_input = bool(decay_input)
         self.v_threshold = float(v_threshold)
@@ -1581,7 +1747,7 @@ class DTLIFNeuron(nn.Module):
             self.v = self.v * rho + x_f
 
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-        spike = self.surrogate_function(self.v - th_f)
+        spike = self.surrogate_function(self.v + self._success_modulation(self.v) - th_f)
 
         rs = spike.detach() if self.detach_reset else spike
         if self.v_reset is None:
@@ -1589,10 +1755,11 @@ class DTLIFNeuron(nn.Module):
         else:
             v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
             self.v = torch.where(rs.bool(), v_reset_t, self.v)
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
-class DGNNeuron(nn.Module):
+class DGNNeuron(SuccessModulationMixin, nn.Module):
     """
     DGN-style neuron following Eq. (5)-(8) with one-step delayed soft reset.
 
@@ -1622,6 +1789,7 @@ class DGNNeuron(nn.Module):
         **kwargs,
     ):
         super().__init__()
+        self._init_success_modulation(**kwargs)
         self.tau_s = float(tau)
         self.decay_input = bool(decay_input)
         self.v_threshold = float(v_threshold)
@@ -1697,7 +1865,7 @@ class DGNNeuron(nn.Module):
         self.v = rho_t * self.v + dt_t * (w_t * self.syn_trace) - th_f * self.prev_spike
 
         # Eq. (8): spike generation
-        spike = self.surrogate_function(self.v - th_f)
+        spike = self.surrogate_function(self.v + self._success_modulation(self.v) - th_f)
 
         rs = spike.detach() if self.detach_reset else spike
         self.prev_spike = rs
@@ -1706,10 +1874,11 @@ class DGNNeuron(nn.Module):
             v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
             self.v = torch.where(rs.bool(), v_reset_t, self.v)
 
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
-class LIFDGNNeuron(nn.Module):
+class LIFDGNNeuron(SuccessModulationMixin, nn.Module):
     """
     LIF with dynamic leak modulation inspired by DGN.
 
@@ -1750,6 +1919,7 @@ class LIFDGNNeuron(nn.Module):
         **kwargs,
     ):
         super().__init__()
+        self._init_success_modulation(**kwargs)
         self.tau0 = float(tau)
         self.decay_input = bool(decay_input)
         self.v_threshold = float(v_threshold)
@@ -1891,7 +2061,7 @@ class LIFDGNNeuron(nn.Module):
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
         self.v = lambda_t * self.v + x_f - th_f * self.prev_spike
 
-        spike = self.surrogate_function(self.v - th_f)
+        spike = self.surrogate_function(self.v + self._success_modulation(self.v) - th_f)
         rs = spike.detach() if self.detach_reset else spike
         self.prev_spike = rs
 
@@ -1899,6 +2069,7 @@ class LIFDGNNeuron(nn.Module):
             v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
             self.v = torch.where(rs.bool(), v_reset_t, self.v)
 
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
@@ -1939,7 +2110,7 @@ class LIFDGN2Neuron(LIFDGNNeuron):
         self.v = lambda_t * (self.v + x_f)
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
 
-        spike = self.surrogate_function(self.v - th_f)
+        spike = self.surrogate_function(self.v + self._success_modulation(self.v) - th_f)
         rs = spike.detach() if self.detach_reset else spike
 
         # same-step reset
@@ -1950,6 +2121,7 @@ class LIFDGN2Neuron(LIFDGNNeuron):
             v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
             self.v = torch.where(rs.bool(), v_reset_t, self.v)
 
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
@@ -1978,7 +2150,7 @@ class LIFDGN3Neuron(LIFDGNNeuron):
         self.v = rho_t * self.v + (one - rho_t) * x_f
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
 
-        spike = self.surrogate_function(self.v - th_f)
+        spike = self.surrogate_function(self.v + self._success_modulation(self.v) - th_f)
         rs = spike.detach() if self.detach_reset else spike
 
         self.v = self.v - th_f * rs
@@ -1988,6 +2160,7 @@ class LIFDGN3Neuron(LIFDGNNeuron):
             v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
             self.v = torch.where(rs.bool(), v_reset_t, self.v)
 
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
@@ -2043,7 +2216,7 @@ class NewCLIFNeuron(BPTTNeuronTauDependent):
         self.m = self.m * torch.sigmoid(self.v / (tau_eff + self.tau_eps))
 
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-        spike = self.surrogate_function(self.v - th_f)
+        spike = self.surrogate_function(self.v + self._success_modulation(self.v) - th_f)
 
         self.m = self.m + spike
 
@@ -2068,6 +2241,7 @@ class NewCLIFNeuron(BPTTNeuronTauDependent):
             tau_next = tau_next.clamp(min=self.tau_lo, max=self.tau_hi)
             self.log_tau_state = torch.log(tau_next)
 
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
@@ -2115,7 +2289,7 @@ class LSPLIFNeuron(LSLIFNeuron):
         total_mem = m_t + history_term
 
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
-        spike = self._asn_fire(total_mem, th_f)
+        spike = self._success_fire(total_mem, th_f)
 
         rs = spike.detach() if self.detach_reset else spike
         if self.v_reset is None:
@@ -2126,6 +2300,7 @@ class LSPLIFNeuron(LSLIFNeuron):
 
         self.n = n_t
         self.has_fired = torch.logical_or(self.has_fired, rs.bool())
+        self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 
 
