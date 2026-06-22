@@ -125,8 +125,10 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), HALIF, ZELIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, QKVLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), HALIF, ZELIF, IDISILIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, QKVLIF, CLIF, PLIF, relu')
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
+    parser.add_argument('-idisi_max_inverse_decay', type=float, default=8.0, help='for IDISILIF only: clamp for inverse-decay ISI credit')
+    parser.add_argument('-idisi_eps', type=float, default=1e-6, help='for IDISILIF only: numerical epsilon for threshold and decay')
     parser.add_argument('-asn_enable', action='store_true', help='enable ASN local lateral inhibition on 4D neuron maps')
     parser.add_argument('-asn_p', type=float, default=0.5, help='for ASN only: Bernoulli probability for ASN-like positions')
     parser.add_argument('-asn_rho', type=float, default=0.5, help='for ASN only: local lateral inhibition strength')
@@ -460,6 +462,8 @@ def main():
         neuron_model = neuron.VanillaLIFNeuron
     elif args.neuron_model == 'ZELIF':
         neuron_model = neuron.ZELIFNeuron
+    elif args.neuron_model == 'IDISILIF':
+        neuron_model = neuron.IDISILIFNeuron
     elif args.neuron_model == 'newLIF':
         neuron_model = neuron.BPTTNeuron
     elif args.neuron_model == 'newLIFTauDep':
@@ -508,6 +512,9 @@ def main():
 
     neuron_kwargs = dict(
         tau=args.tau,
+        idisi_max_inverse_decay=args.idisi_max_inverse_decay,
+        idisi_total_steps=args.T,
+        idisi_eps=args.idisi_eps,
         surrogate_function=surrogate_function,
         tau_mode=args.tau_mode,
         tau_lo=args.tau_lo,

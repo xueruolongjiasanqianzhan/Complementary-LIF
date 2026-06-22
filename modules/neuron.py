@@ -1518,6 +1518,114 @@ class VanillaLIFNeuron(ASNFireMixin, LIFNode_sj):
         return spike
 
 
+
+
+class IDISISpikeFunction(torch.autograd.Function):
+    """Binary spike with ID-ISI-BP pseudo-gradient over one unrolled sequence.
+
+    The forward value is the ordinary threshold spike.  During backward, each
+    postsynaptic spike at time t redistributes its upstream gradient over the
+    inter-spike interval [t_last + 1, t] with inverse leak-decay compensation.
+    """
+
+    @staticmethod
+    def forward(ctx, u_pre: torch.Tensor, spike: torch.Tensor, module: nn.Module, step_idx: int):
+        ctx.module = module
+        ctx.step_idx = int(step_idx)
+        return spike
+
+    @staticmethod
+    def backward(ctx, grad_spike: torch.Tensor):
+        module = ctx.module
+        step_idx = ctx.step_idx
+        module._idisi_grad_spike_seq[step_idx] = grad_spike.detach()
+        grad_input = module._compute_idisi_grad_for_step(step_idx)
+        return grad_input.to(dtype=grad_spike.dtype), None, None, None
+
+
+class IDISILIFNeuron(VanillaLIFNeuron):
+    """Vanilla LIF forward with ID-ISI-BP pseudo-gradient backward.
+
+    Forward dynamics are intentionally kept the same as ``VanillaLIFNeuron``:
+    charge, threshold fire, and reset.  Only the backward path through the spike
+    output is replaced by the inverse-decay inter-spike-interval credit rule.
+    """
+
+    def __init__(self, tau: float = 2., decay_input: bool = False, v_threshold: float = 1.,
+                 v_reset: float = None, surrogate_function: Callable = Rectangle(),
+                 detach_reset: bool = False, cupy_fp32_inference=False, **kwargs):
+        super().__init__(tau, decay_input, v_threshold, v_reset, surrogate_function, detach_reset, cupy_fp32_inference, **kwargs)
+        self.idisi_max_inverse_decay = float(kwargs.get('idisi_max_inverse_decay', 8.0))
+        self.idisi_total_steps = int(kwargs.get('idisi_total_steps', 0) or 0)
+        self.idisi_eps = float(kwargs.get('idisi_eps', 1e-6))
+        self.idisi_fan_in = int(kwargs.get('idisi_fan_in', 0) or 0)
+        self._idisi_u_pre_seq = []
+        self._idisi_spike_seq = []
+        self._idisi_grad_spike_seq = []
+
+    def reset(self):
+        super().reset()
+        self._idisi_u_pre_seq = []
+        self._idisi_spike_seq = []
+        self._idisi_grad_spike_seq = []
+
+    def forward(self, x: torch.Tensor):
+        LIFNode_sj.neuronal_charge(self, x)
+        u_pre = self.v
+        th_f = torch.as_tensor(self.v_threshold, device=u_pre.device, dtype=u_pre.dtype)
+        spike = (u_pre >= th_f).to(dtype=x.dtype)
+        step_idx = len(self._idisi_u_pre_seq)
+        self._idisi_u_pre_seq.append(u_pre.detach())
+        self._idisi_spike_seq.append(spike.detach())
+        self._idisi_grad_spike_seq.append(None)
+        spike_with_idisi_grad = IDISISpikeFunction.apply(u_pre, spike, self, step_idx)
+        LIFNode_sj.neuronal_reset(self, spike_with_idisi_grad.detach() if self.detach_reset else spike_with_idisi_grad)
+        self._cache_success_spike(spike_with_idisi_grad)
+        return spike_with_idisi_grad
+
+    def _lambda_decay(self, device, dtype):
+        tau = torch.as_tensor(self.tau, device=device, dtype=dtype)
+        return torch.clamp(1.0 - 1.0 / torch.clamp(tau, min=1.0 + self.idisi_eps), min=self.idisi_eps)
+
+    def _compute_idisi_grad_for_step(self, target_step: int):
+        if not self._idisi_u_pre_seq:
+            return None
+        T = len(self._idisi_u_pre_seq)
+        device = self._idisi_u_pre_seq[0].device
+        dtype = self._idisi_u_pre_seq[0].dtype
+        grad_input_seq = [torch.zeros_like(u) for u in self._idisi_u_pre_seq]
+        threshold = torch.as_tensor(self.v_threshold, device=device, dtype=dtype).clamp_min(self.idisi_eps)
+        lambda_decay = self._lambda_decay(device, dtype)
+        max_inv = torch.as_tensor(self.idisi_max_inverse_decay, device=device, dtype=dtype)
+
+        last_spike_time = torch.full_like(self._idisi_spike_seq[0], -1, dtype=torch.long)
+        n_in = max(1, self.idisi_fan_in if self.idisi_fan_in > 0 else int(self._idisi_spike_seq[0][0].numel()))
+
+        for t in range(T):
+            spike_t = self._idisi_spike_seq[t].to(dtype=torch.bool)
+            if not spike_t.any():
+                continue
+            L = (t - last_spike_time).to(dtype=dtype).clamp_min(1.0)
+            base_credit = self._idisi_u_pre_seq[t] / (L * threshold)
+            grad_t = self._idisi_grad_spike_seq[t]
+            if grad_t is None:
+                grad_t = torch.zeros_like(self._idisi_u_pre_seq[t])
+            else:
+                grad_t = grad_t.to(device=device, dtype=dtype)
+
+            for k in range(T):
+                in_window = spike_t & (last_spike_time < k) & (k <= t)
+                if not in_window.any():
+                    continue
+                delta_t = t - k
+                inverse_decay = torch.clamp(lambda_decay.pow(-delta_t), max=max_inv)
+                credit = grad_t * base_credit * inverse_decay / float(n_in)
+                grad_input_seq[k] = grad_input_seq[k] + torch.where(in_window, credit, torch.zeros_like(credit))
+            last_spike_time = torch.where(spike_t, torch.full_like(last_spike_time, t), last_spike_time)
+        return grad_input_seq[target_step]
+
+
+
 class ZELIFNeuron(VanillaLIFNeuron):
     """
     ZELIF = LIF + pattern branch with shared code->parameter lookup.
