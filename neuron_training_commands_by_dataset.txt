@@ -299,6 +299,10 @@ python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIF
+
+# ID-ISI-BP LIF（实验性反向传播；前向同 LIF，tau 自动推导 lambda_decay=1-1/tau，默认反衰减裁剪 8.0）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model IDISILIF \
+  -idisi_max_inverse_decay 8.0 -idisi_eps 1e-6
 # HALIF（异质自主 LIF；10% autonomous neurons，3 个固定驱动组，默认按当前 T 形成 [2T, T, T/2] 自发周期）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model HALIF \
   -halif_auto_ratio 0.1 -halif_num_auto_groups 3 -halif_v_reset 0.0 -halif_auto_seed 2022

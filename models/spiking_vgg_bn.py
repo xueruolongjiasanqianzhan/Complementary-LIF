@@ -1,4 +1,6 @@
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from spikingjelly.clock_driven import layer
 
 __all__ = [
@@ -38,6 +40,67 @@ cfg = {
 }
 
 
+class IDISIConv2dFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, weight, bias, stride, padding, dilation, groups):
+        ctx.save_for_backward(weight)
+        ctx.has_bias = bias is not None
+        ctx.stride = stride
+        ctx.padding = padding
+        ctx.dilation = dilation
+        ctx.groups = groups
+        ctx.input_shape = x.shape
+        return F.conv2d(x, weight, bias, stride, padding, dilation, groups)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        (weight,) = ctx.saved_tensors
+        fan_in = max(1, (weight.shape[1] * weight.shape[2] * weight.shape[3]))
+        uniform_weight = torch.ones_like(weight, dtype=grad_output.dtype, device=grad_output.device) / float(fan_in)
+        grad_input = torch.nn.grad.conv2d_input(
+            ctx.input_shape, uniform_weight, grad_output, ctx.stride, ctx.padding, ctx.dilation, ctx.groups)
+        per_out = grad_output.sum(dim=(0, 2, 3), dtype=grad_output.dtype).view(-1, 1, 1, 1)
+        grad_weight = (per_out.expand_as(weight) / float(fan_in)).to(dtype=weight.dtype)
+        grad_bias = grad_output.sum(dim=(0, 2, 3)).to(dtype=weight.dtype) if ctx.has_bias else None
+        return grad_input, grad_weight, grad_bias, None, None, None, None
+
+
+class IDISIConv2d(nn.Conv2d):
+    """Conv2d with ID-ISI-style uniform connection credit in backward."""
+
+    def forward(self, x):
+        return IDISIConv2dFunction.apply(
+            x, self.weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+
+
+class IDISILinearFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, weight, bias):
+        ctx.save_for_backward(weight)
+        ctx.has_bias = bias is not None
+        ctx.input_shape = x.shape
+        return F.linear(x, weight, bias)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        (weight,) = ctx.saved_tensors
+        fan_in = max(1, weight.shape[1])
+        uniform_weight = torch.ones_like(weight, dtype=grad_output.dtype, device=grad_output.device) / float(fan_in)
+        grad_input = grad_output.matmul(uniform_weight)
+        flat_grad = grad_output.reshape(-1, grad_output.shape[-1])
+        per_out = flat_grad.sum(dim=0, dtype=grad_output.dtype).view(-1, 1)
+        grad_weight = (per_out.expand_as(weight) / float(fan_in)).to(dtype=weight.dtype)
+        grad_bias = flat_grad.sum(dim=0).to(dtype=weight.dtype) if ctx.has_bias else None
+        return grad_input.reshape(ctx.input_shape), grad_weight, grad_bias
+
+
+class IDISILinear(nn.Linear):
+    """Linear with ID-ISI-style uniform connection credit in backward."""
+
+    def forward(self, x):
+        return IDISILinearFunction.apply(x, self.weight, self.bias)
+
+
 class SpikingVGGBN(nn.Module):
     def __init__(self, vgg_name, neuron: callable = None, dropout=0.0, num_classes=10, **kwargs):
         super(SpikingVGGBN, self).__init__()
@@ -55,9 +118,10 @@ class SpikingVGGBN(nn.Module):
 
         self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
 
+        linear_cls = IDISILinear if getattr(neuron, '__name__', '') == 'IDISILIFNeuron' else nn.Linear
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(512 * 7 * 7, num_classes),
+            linear_cls(512 * 7 * 7, num_classes),
         )
 
         for m in self.modules():
@@ -82,8 +146,12 @@ class SpikingVGGBN(nn.Module):
                 if self.history_mode == 'half' or neuron_kwargs.get('asn_enable', False):
                     neuron_kwargs['layer_index'] = self.layer_index
                     neuron_kwargs['total_layers'] = self.total_neuron_layers
-                layers.append(nn.Conv2d(self.init_channels, x, kernel_size=3, padding=1, bias=self.whether_bias))
+                conv_in_channels = self.init_channels
+                conv_cls = IDISIConv2d if getattr(neuron, '__name__', '') == 'IDISILIFNeuron' else nn.Conv2d
+                layers.append(conv_cls(conv_in_channels, x, kernel_size=3, padding=1, bias=self.whether_bias))
                 layers.append(nn.BatchNorm2d(x))
+                if getattr(neuron, '__name__', '') == 'IDISILIFNeuron':
+                    neuron_kwargs['idisi_fan_in'] = conv_in_channels * 3 * 3
                 layers.append(neuron(**neuron_kwargs))
                 layers.append(layer.Dropout(dropout))
                 self.init_channels = x
