@@ -6,7 +6,14 @@
 # 4) 如需启用 ASN，可在任意 4D 卷积神经元实验命令后追加：
 #      -asn_enable -asn_p 0.5 -asn_rho 0.5 -asn_seed 2022
 #    如需阻断侧抑制场梯度，再追加：-asn_detach_lateral
-# 5) QKVLIF 专属参数说明（方便调参）：
+# 5) HALIF 专属参数说明（方便调参）：
+#    -halif_auto_ratio 0.1：每层按 [C,H,W] 或 [C] 位置随机选为 autonomous neurons 的比例。
+#    -halif_num_auto_groups 3：将 autonomous neurons 平均分配到多少个固定内在驱动强度组。
+#    -halif_drive_periods：若不显式给 -halif_auto_drive_values，则按 v_threshold / period 计算各组驱动；默认由当前 T 形成 [2T, T, max(1,T//2)]。
+#    -halif_auto_drive_values：显式指定各组 intrinsic drive，优先级高于 -halif_drive_periods。
+#    -halif_v_reset 0.0：autonomous neurons 发放后的 hard reset 电位。
+#    -halif_auto_seed 2022：固定 auto_mask 随机选择，便于复现实验。
+# 6) QKVLIF 专属参数说明（方便调参）：
 #    -qkv_alpha 0.1：注意力上下文注入膜电位的系数，膜电位更新为 total_mem = lif_mem + qkv_alpha * context；越大历史输入影响越强。
 #    -qkv_learn_alpha True：是否让 qkv_alpha 作为可学习参数；True 时训练会自动调整历史注意力强度，False 时固定使用命令行给定值。
 #    -qkv_max_history 0：每个神经元缓存多少个历史时间步；0 表示保留当前样本序列内全部历史，正整数表示只保留最近 K 步以省显存/计算。
@@ -19,6 +26,9 @@
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIF
+# HALIF（异质自主 LIF；10% autonomous neurons，3 个固定驱动组，默认按当前 T 形成 [2T, T, T/2] 自发周期）
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model HALIF \
+  -halif_auto_ratio 0.1 -halif_num_auto_groups 3 -halif_v_reset 0.0 -halif_auto_seed 2022
 
 # ZELIF（特有参数：-zelif_alpha=0.1）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model ZELIF \
@@ -107,6 +117,9 @@ python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIF
+# HALIF（异质自主 LIF；10% autonomous neurons，3 个固定驱动组，默认按当前 T 形成 [2T, T, T/2] 自发周期）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model HALIF \
+  -halif_auto_ratio 0.1 -halif_num_auto_groups 3 -halif_v_reset 0.0 -halif_auto_seed 2022
 
 # ZELIF（特有参数：-zelif_alpha=0.1）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model ZELIF \
@@ -195,6 +208,9 @@ python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIF
+# HALIF（异质自主 LIF；10% autonomous neurons，3 个固定驱动组，默认按当前 T 形成 [2T, T, T/2] 自发周期）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model HALIF \
+  -halif_auto_ratio 0.1 -halif_num_auto_groups 3 -halif_v_reset 0.0 -halif_auto_seed 2022
 
 # ZELIF（特有参数：-zelif_alpha=0.1）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model ZELIF \
@@ -283,6 +299,9 @@ python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIF
+# HALIF（异质自主 LIF；10% autonomous neurons，3 个固定驱动组，默认按当前 T 形成 [2T, T, T/2] 自发周期）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model HALIF \
+  -halif_auto_ratio 0.1 -halif_num_auto_groups 3 -halif_v_reset 0.0 -halif_auto_seed 2022
 
 # ZELIF（特有参数：-zelif_alpha=0.1）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model ZELIF \
@@ -371,6 +390,9 @@ python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -m
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIF
+# HALIF（异质自主 LIF；10% autonomous neurons，3 个固定驱动组，默认按当前 T 形成 [2T, T, T/2] 自发周期）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model HALIF \
+  -halif_auto_ratio 0.1 -halif_num_auto_groups 3 -halif_v_reset 0.0 -halif_auto_seed 2022
 
 # ZELIF（特有参数：-zelif_alpha=0.1）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model ZELIF \

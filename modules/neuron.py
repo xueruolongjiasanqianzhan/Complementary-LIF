@@ -1,4 +1,4 @@
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 import numpy as np
 import torch
@@ -532,6 +532,181 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
         self.has_fired = torch.logical_or(self.has_fired, rs.bool())
         self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
+
+
+class HALIFNeuron(ASNFireMixin, nn.Module):
+    """
+    Heterogeneous Autonomous LIF neuron.
+
+    A fixed ``auto_ratio`` of neuron positions use non-leaky autonomous dynamics
+    with heterogeneous intrinsic drives, while the remaining positions use the
+    standard leaky LIF update. Normal neurons use soft reset; autonomous neurons
+    use hard reset to ``v_reset``.
+    """
+
+    _instance_count = 0
+
+    def __init__(
+        self,
+        tau: float = 2.0,
+        decay_input: bool = False,
+        v_threshold: float = 1.0,
+        v_reset: float = 0.0,
+        surrogate_function: Optional[Callable] = None,
+        detach_reset: bool = False,
+        tau_eps: float = 1e-6,
+        auto_ratio: float = 0.1,
+        num_auto_groups: int = 3,
+        drive_periods: Optional[List[int]] = None,
+        auto_drive_values: Optional[List[float]] = None,
+        auto_T: int = 16,
+        auto_seed: int = 2022,
+        layer_index: Optional[int] = None,
+        asn_enable: bool = False,
+        asn_p: float = 0.5,
+        asn_rho: float = 0.5,
+        asn_seed: int = 2022,
+        asn_detach_lateral: bool = False,
+        **kwargs,
+    ):
+        super().__init__()
+        self.tau = float(tau)
+        self.decay_input = bool(decay_input)
+        self.v_threshold = float(v_threshold)
+        self.v_reset = float(v_reset)
+        self.detach_reset = bool(detach_reset)
+        self.tau_eps = float(tau_eps)
+        self.auto_ratio = float(auto_ratio)
+        if not 0.0 <= self.auto_ratio <= 1.0:
+            raise ValueError('auto_ratio must be in [0, 1].')
+        self.num_auto_groups = int(max(1, num_auto_groups))
+        self.drive_periods = None if drive_periods is None else [int(max(1, p)) for p in drive_periods]
+        self.auto_drive_values = None if auto_drive_values is None else [float(v) for v in auto_drive_values]
+        self.auto_T = int(max(1, auto_T))
+        self.auto_seed = int(auto_seed)
+        self.layer_index = int(layer_index) if layer_index is not None else HALIFNeuron._instance_count
+        HALIFNeuron._instance_count += 1
+        self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
+        self._init_asn(
+            asn_enable=asn_enable,
+            asn_p=asn_p,
+            asn_rho=asn_rho,
+            asn_seed=asn_seed,
+            asn_detach_lateral=asn_detach_lateral,
+            layer_index=self.layer_index,
+            **_success_modulation_kwargs(kwargs),
+        )
+
+        self.v = None
+        self.register_buffer('auto_mask', None)
+        self.register_buffer('auto_drive', None)
+        self._auto_shape = None
+        self._auto_init_T = None
+
+    def reset(self):
+        self.v = None
+
+    def reset_state(self):
+        self.reset()
+
+    def _step_shape(self, x: torch.Tensor):
+        if x.dim() < 2:
+            raise ValueError('HALIF expects a batched input with shape [B, ...] or [T, B, ...].')
+        return (1,) + tuple(x.shape[1:])
+
+    def _get_drive_values(self, T: int, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
+        if self.auto_drive_values is not None:
+            values = self.auto_drive_values
+        else:
+            if self.drive_periods is not None:
+                periods = self.drive_periods
+            else:
+                T = int(max(1, T))
+                periods = [2 * T, T, max(1, T // 2)]
+            values = [self.v_threshold / float(max(1, p)) for p in periods]
+
+        if len(values) == 0:
+            raise ValueError('HALIF requires at least one auto drive value.')
+        if len(values) < self.num_auto_groups:
+            values = values + [values[-1]] * (self.num_auto_groups - len(values))
+        return torch.as_tensor(values[:self.num_auto_groups], dtype=dtype, device=device)
+
+    def _ensure_auto_buffers(self, x: torch.Tensor, T: int):
+        mask_shape = self._step_shape(x)
+        need_init = (
+            self.auto_mask is None
+            or tuple(self.auto_mask.shape) != mask_shape
+            or self.auto_mask.device != x.device
+            or self._auto_init_T != int(T)
+        )
+        if not need_init:
+            return
+
+        dtype = torch.float32
+        device = x.device
+        auto_mask = torch.zeros(mask_shape, dtype=dtype, device=device)
+        auto_drive = torch.zeros(mask_shape, dtype=dtype, device=device)
+        num_positions = int(np.prod(mask_shape[1:]))
+        num_auto = int(round(num_positions * self.auto_ratio))
+        num_auto = max(0, min(num_positions, num_auto))
+
+        if num_auto > 0:
+            seed = self.auto_seed + self.layer_index * 1000003
+            generator = torch.Generator(device=device)
+            generator.manual_seed(seed)
+            perm = torch.randperm(num_positions, generator=generator, device=device)
+            auto_indices = perm[:num_auto]
+            flat_mask = auto_mask.view(-1)
+            flat_drive = auto_drive.view(-1)
+            flat_mask[auto_indices] = 1.0
+
+            drive_values = self._get_drive_values(T, dtype=dtype, device=device)
+            group_ids = torch.arange(num_auto, device=device) % self.num_auto_groups
+            shuffled_group_ids = group_ids[torch.randperm(num_auto, generator=generator, device=device)]
+            flat_drive[auto_indices] = drive_values[shuffled_group_ids]
+
+        self.auto_mask = auto_mask
+        self.auto_drive = auto_drive
+        self._auto_shape = mask_shape
+        self._auto_init_T = int(T)
+
+    def _ensure_state(self, x: torch.Tensor):
+        if self.v is None or self.v.shape != x.shape or self.v.device != x.device:
+            self.v = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+
+    def _lambda_decay(self, device: torch.device) -> torch.Tensor:
+        decay = 1.0 - 1.0 / (torch.as_tensor(self.tau, device=device, dtype=torch.float32) + self.tau_eps)
+        return torch.clamp(decay, 0.0, 1.0)
+
+    def _single_step_forward(self, x: torch.Tensor, T: int) -> torch.Tensor:
+        self._ensure_state(x)
+        self._ensure_auto_buffers(x, T)
+        x_f = x.to(torch.float32)
+        th_f = torch.as_tensor(self.v_threshold, device=x.device, dtype=torch.float32)
+        normal_mask = 1.0 - self.auto_mask
+
+        lambda_decay = self._lambda_decay(x.device)
+        if self.decay_input:
+            v_normal = self.v * lambda_decay + x_f / (torch.as_tensor(self.tau, device=x.device, dtype=torch.float32) + self.tau_eps)
+        else:
+            v_normal = self.v * lambda_decay + x_f
+        v_auto = self.v + x_f + self.auto_drive
+        v_pre = normal_mask * v_normal + self.auto_mask * v_auto
+
+        spike = self._success_fire(v_pre, th_f)
+        rs = spike.detach() if self.detach_reset else spike
+        v_normal_reset = v_pre - rs * th_f
+        v_reset_t = torch.as_tensor(self.v_reset, device=x.device, dtype=torch.float32)
+        v_auto_reset = (1.0 - rs) * v_pre + rs * v_reset_t
+        self.v = normal_mask * v_normal_reset + self.auto_mask * v_auto_reset
+        self._cache_success_spike(spike)
+        return spike.to(dtype=x.dtype)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dim() >= 5 or (x.dim() == 3 and int(x.shape[0]) == self.auto_T):
+            T = int(x.shape[0])
+            return torch.stack([self._single_step_forward(x[t], T) for t in range(T)], dim=0)
+        return self._single_step_forward(x, self.auto_T)
 
 
 class QKVLIFNeuron(ASNFireMixin, nn.Module):

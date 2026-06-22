@@ -70,7 +70,11 @@ LSLIF4 uses the same dataset/model commands; only switch the neuron option to ``
     # DVS-Gesture with LSLIF4
     python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF4
 
-If you change the neuron, you can switch with ``-neuron_model`` among ``LIF`` (vanilla), ``newLIF`` (adaptive tau), ``newLIFTauDep``, ``newCLIF``, ``DTLIF``, ``DGN``, ``LIFDGN``, ``LSLIF``, ``LSLIF2``, ``LSLIF3``, ``LSLIF4``, ``QKVLIF``, ``CLIF``, ``PLIF``, and ``relu``.
+If you change the neuron, you can switch with ``-neuron_model`` among ``LIF`` (vanilla), ``HALIF`` (heterogeneous autonomous LIF), ``newLIF`` (adaptive tau), ``newLIFTauDep``, ``newCLIF``, ``DTLIF``, ``DGN``, ``LIFDGN``, ``LSLIF``, ``LSLIF2``, ``LSLIF3``, ``LSLIF4``, ``QKVLIF``, ``CLIF``, ``PLIF``, and ``relu``.
+
+HALIF adds heterogeneous autonomous neurons inside each LIF layer. For example:
+
+    python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -neuron_model HALIF -halif_auto_ratio 0.1 -halif_num_auto_groups 3
 
 QKVLIF adds a causal QKV attention branch inside membrane charging. Its tunable
 CLI parameters are ``-qkv_alpha`` (attention context scale in
