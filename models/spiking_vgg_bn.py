@@ -56,12 +56,12 @@ class IDISIConv2dFunction(torch.autograd.Function):
     def backward(ctx, grad_output):
         (weight,) = ctx.saved_tensors
         fan_in = max(1, (weight.shape[1] * weight.shape[2] * weight.shape[3]))
-        uniform_weight = torch.ones_like(weight) / float(fan_in)
+        uniform_weight = torch.ones_like(weight, dtype=grad_output.dtype, device=grad_output.device) / float(fan_in)
         grad_input = torch.nn.grad.conv2d_input(
             ctx.input_shape, uniform_weight, grad_output, ctx.stride, ctx.padding, ctx.dilation, ctx.groups)
         per_out = grad_output.sum(dim=(0, 2, 3), dtype=grad_output.dtype).view(-1, 1, 1, 1)
-        grad_weight = per_out.expand_as(weight) / float(fan_in)
-        grad_bias = grad_output.sum(dim=(0, 2, 3)) if ctx.has_bias else None
+        grad_weight = (per_out.expand_as(weight) / float(fan_in)).to(dtype=weight.dtype)
+        grad_bias = grad_output.sum(dim=(0, 2, 3)).to(dtype=weight.dtype) if ctx.has_bias else None
         return grad_input, grad_weight, grad_bias, None, None, None, None
 
 
@@ -85,11 +85,12 @@ class IDISILinearFunction(torch.autograd.Function):
     def backward(ctx, grad_output):
         (weight,) = ctx.saved_tensors
         fan_in = max(1, weight.shape[1])
-        grad_input = grad_output.matmul(torch.ones_like(weight) / float(fan_in))
+        uniform_weight = torch.ones_like(weight, dtype=grad_output.dtype, device=grad_output.device) / float(fan_in)
+        grad_input = grad_output.matmul(uniform_weight)
         flat_grad = grad_output.reshape(-1, grad_output.shape[-1])
         per_out = flat_grad.sum(dim=0, dtype=grad_output.dtype).view(-1, 1)
-        grad_weight = per_out.expand_as(weight) / float(fan_in)
-        grad_bias = flat_grad.sum(dim=0) if ctx.has_bias else None
+        grad_weight = (per_out.expand_as(weight) / float(fan_in)).to(dtype=weight.dtype)
+        grad_bias = flat_grad.sum(dim=0).to(dtype=weight.dtype) if ctx.has_bias else None
         return grad_input.reshape(ctx.input_shape), grad_weight, grad_bias
 
 
