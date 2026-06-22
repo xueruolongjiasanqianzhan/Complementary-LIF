@@ -125,7 +125,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), ZELIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, QKVLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), HALIF, ZELIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, QKVLIF, CLIF, PLIF, relu')
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
     parser.add_argument('-asn_enable', action='store_true', help='enable ASN local lateral inhibition on 4D neuron maps')
     parser.add_argument('-asn_p', type=float, default=0.5, help='for ASN only: Bernoulli probability for ASN-like positions')
@@ -188,6 +188,13 @@ def main():
     parser.add_argument('-rcm_learn_beta', action='store_true', help='for RCMLIF only: make beta learnable')
     parser.add_argument('-rcm_phi', type=str, default='tanh', choices=['tanh', 'identity', 'time_norm'], help='for RCMLIF only: transform applied to reset-loss memory before compensation')
     parser.add_argument('-rcm_power', type=float, default=1.0, help='for RCMLIF only: time normalization power when rcm_phi=time_norm')
+    parser.add_argument('-halif_auto_ratio', type=float, default=0.1, help='for HALIF only: ratio of autonomous neurons in each layer')
+    parser.add_argument('-halif_num_auto_groups', type=int, default=3, help='for HALIF only: number of heterogeneous autonomous-drive groups')
+    parser.add_argument('-halif_drive_periods', type=int, nargs='*', default=None, help='for HALIF only: drive periods used to derive fixed auto drives')
+    parser.add_argument('-halif_auto_drive_values', type=float, nargs='*', default=None, help='for HALIF only: explicit fixed auto-drive values; overrides halif_drive_periods')
+    parser.add_argument('-halif_v_reset', type=float, default=0.0, help='for HALIF only: hard-reset voltage for autonomous neurons')
+    parser.add_argument('-halif_auto_T', type=int, default=None, help='for HALIF only: sequence length for default drive periods; defaults to args.T')
+    parser.add_argument('-halif_auto_seed', type=int, default=2022, help='for HALIF only: seed for deterministic autonomous masks')
     parser.add_argument('-dtlif_dt', type=float, default=1.0, help='for DTLIF only: time-step size used in rho update')
     parser.add_argument('-dtlif_a', type=float, default=0.1, help='for DTLIF only: retention boost coefficient when membrane is low')
     parser.add_argument('-dtlif_b', type=float, default=0.1, help='for DTLIF only: leakage boost coefficient when membrane is high')
@@ -487,6 +494,8 @@ def main():
         neuron_model = neuron.ThresholdLadderLIFNeuron
     elif args.neuron_model == 'QKVLIF':
         neuron_model = neuron.QKVLIFNeuron
+    elif args.neuron_model == 'HALIF':
+        neuron_model = neuron.HALIFNeuron
     elif args.neuron_model == 'CLIF':
         neuron_model = neuron.ComplementaryLIFNeuron
     elif args.neuron_model == 'PLIF':
@@ -570,6 +579,12 @@ def main():
         qkv_learn_w=args.qkv_learn_w,
         qkv_max_history=args.qkv_max_history,
         qkv_detach_history=args.qkv_detach_history,
+        auto_ratio=args.halif_auto_ratio,
+        num_auto_groups=args.halif_num_auto_groups,
+        drive_periods=args.halif_drive_periods,
+        auto_drive_values=args.halif_auto_drive_values,
+        auto_T=args.T if args.halif_auto_T is None else args.halif_auto_T,
+        auto_seed=args.halif_auto_seed,
         asn_enable=args.asn_enable,
         asn_p=args.asn_p,
         asn_rho=args.asn_rho,
@@ -587,6 +602,8 @@ def main():
         neuron_kwargs['zelif_alpha'] = args.zelif_alpha
     if args.neuron_model == 'RCMLIF':
         neuron_kwargs['v_reset'] = None if args.rcm_reset == 'soft' else args.rcm_v_reset
+    if args.neuron_model == 'HALIF':
+        neuron_kwargs['v_reset'] = args.halif_v_reset
 
     if args.model in ['spiking_resnet18', 'spiking_resnet34', 'spiking_resnet50', 'spiking_resnet101', 'spiking_resnet152']:
         net = spiking_resnet.__dict__[args.model](neuron=neuron_model, num_classes=num_classes,
@@ -750,6 +767,14 @@ def main():
             f'rcm_beta可学习{beta_can_learn}',
             f'rcm_phi{args.rcm_phi}',
             f'rcm_power{args.rcm_power}',
+        ])
+    elif args.neuron_model == 'HALIF':
+        run_name_parts.extend([
+            f'halif_auto_ratio{args.halif_auto_ratio}',
+            f'halif_groups{args.halif_num_auto_groups}',
+            f'halif_T{args.T if args.halif_auto_T is None else args.halif_auto_T}',
+            f'halif_vreset{args.halif_v_reset}',
+            f'halif_seed{args.halif_auto_seed}',
         ])
     if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSLIF3', 'LSLIF4', 'LSCLIF', 'LSPLIF', 'TLIF']:
         history_weight_can_learn = '是' if args.history_learn_weight else '否'
