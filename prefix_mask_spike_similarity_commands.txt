@@ -56,3 +56,22 @@ python analysis/prefix_mask_spike_similarity.py \
   --batch-size 16 \
   --workers 0 \
   --layer-indices 1 4 8
+
+############################################################
+# DVS-CIFAR10: LIF vs SCRLIF, VGG11, T=16, k=2/4/8
+############################################################
+
+python analysis/prefix_mask_spike_similarity.py \
+  --lif-checkpoint /path/to/lif_log/checkpoint_max.pth \
+  --lsl-checkpoint /path/to/scrlif_log/checkpoint_max.pth \
+  --lif-args /path/to/lif_log/args.txt \
+  --lsl-args /path/to/scrlif_log/args.txt \
+  --lsl-neuron-model SCRLIF \
+  --lsl-label SCRLIF \
+  --data-dir /path/to/DVS-CIFAR10 \
+  --out-dir analysis_results/prefix_mask_dvscifar10_lif_vs_scrlif \
+  --T 16 \
+  --mask-prefixes 2 4 8 \
+  --batch-size 16 \
+  --workers 0 \
+  --layer-mode shallow_middle_deep
