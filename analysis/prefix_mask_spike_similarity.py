@@ -191,7 +191,9 @@ def choose_neuron(name: str):
         return neuron.VanillaLIFNeuron
     if name == 'LSLIF':
         return neuron.LSLIFNeuron
-    raise NotImplementedError(f'This analysis currently supports LIF and LSLIF only, got {name}')
+    if name == 'SCRLIF':
+        return neuron.SCRLIFNeuron
+    raise NotImplementedError(f'This analysis currently supports LIF, LSLIF, and SCRLIF only, got {name}')
 
 
 def build_vgg11(args_ns: SimpleNamespace, forced_neuron_model: str, device: torch.device) -> torch.nn.Module:
@@ -213,6 +215,14 @@ def build_vgg11(args_ns: SimpleNamespace, forced_neuron_model: str, device: torc
         tau_learn_alpha=getattr(args_ns, 'tau_learn_alpha', False),
         tau_alpha_share=getattr(args_ns, 'tau_alpha_share', False),
         tau_learn_eta=getattr(args_ns, 'tau_learn_eta', False),
+        scr_r0=getattr(args_ns, 'scr_r0', 0.8),
+        scr_alpha_in=getattr(args_ns, 'scr_alpha_in', 0.2),
+        scr_alpha_exc=getattr(args_ns, 'scr_alpha_exc', 0.1),
+        scr_alpha_isi=getattr(args_ns, 'scr_alpha_isi', 0.1),
+        scr_r_min=getattr(args_ns, 'scr_r_min', 0.7),
+        scr_r_max=getattr(args_ns, 'scr_r_max', 1.2),
+        scr_tau_isi=(getattr(args_ns, 'T', 16) if getattr(args_ns, 'scr_tau_isi', None) is None else getattr(args_ns, 'scr_tau_isi', None)),
+        scr_init_isi=getattr(args_ns, 'scr_init_isi', None),
         history_weight=getattr(args_ns, 'history_weight', 1.0),
         history_power=getattr(args_ns, 'history_power', 1.0),
         history_eps=getattr(args_ns, 'history_eps', 1e-6),
@@ -628,7 +638,9 @@ def parse_args():
     parser.add_argument('--lif-checkpoint', required=True, help='Required path to LIF checkpoint_max.pth.')
     parser.add_argument('--lsl-checkpoint', required=True, help='Required path to LSLIF checkpoint_max.pth.')
     parser.add_argument('--lif-args', required=True, help='Required path to the LIF run args.txt.')
-    parser.add_argument('--lsl-args', required=True, help='Required path to the LSLIF run args.txt.')
+    parser.add_argument('--lsl-args', required=True, help='Required path to the comparison run args.txt (LSLIF by default).')
+    parser.add_argument('--lsl-neuron-model', default='LSLIF', choices=['LSLIF', 'SCRLIF'], help='Neuron model for the comparison checkpoint.')
+    parser.add_argument('--lsl-label', default=None, help='Display label for the comparison method; defaults to --lsl-neuron-model.')
     parser.add_argument('--data-dir', required=True, help='Required DVS-CIFAR10 data root.')
     parser.add_argument('--out-dir', required=True, help='Required output directory for CSV/JSON/figures.')
     parser.add_argument('--T', type=int, default=16, help='Number of time steps. Must match checkpoints/data frames.')
@@ -646,9 +658,10 @@ def parse_args():
 def main():
     cli = parse_args()
     lif_checkpoint = require_file(cli.lif_checkpoint, 'LIF checkpoint')
-    lsl_checkpoint = require_file(cli.lsl_checkpoint, 'LSLIF checkpoint')
+    lsl_label = cli.lsl_label or cli.lsl_neuron_model
+    lsl_checkpoint = require_file(cli.lsl_checkpoint, f'{lsl_label} checkpoint')
     lif_args_path = require_file(cli.lif_args, 'LIF args.txt')
-    lsl_args_path = require_file(cli.lsl_args, 'LSLIF args.txt')
+    lsl_args_path = require_file(cli.lsl_args, f'{lsl_label} args.txt')
     out_dir = Path(cli.out_dir).expanduser().resolve()
     figures_dir = out_dir / 'figures'
     figures_dir.mkdir(parents=True, exist_ok=True)
@@ -662,7 +675,7 @@ def main():
     device = torch.device(cli.device)
     methods = [
         ('LIF', lif_checkpoint, lif_args_path, 'LIF'),
-        ('LSLIF', lsl_checkpoint, lsl_args_path, 'LSLIF'),
+        (lsl_label, lsl_checkpoint, lsl_args_path, cli.lsl_neuron_model),
     ]
     test_loader = build_test_loader(cli.data_dir, cli.T, cli.batch_size, cli.workers)
 

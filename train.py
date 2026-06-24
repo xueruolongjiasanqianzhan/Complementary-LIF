@@ -125,7 +125,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), HALIF, ZELIF, IDISILIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, QKVLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), SCRLIF (Spike-Cause Reset LIF), HALIF, ZELIF, IDISILIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, QKVLIF, CLIF, PLIF, relu')
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
     parser.add_argument('-idisi_max_inverse_decay', type=float, default=8.0, help='for IDISILIF only: clamp for inverse-decay ISI credit')
     parser.add_argument('-idisi_eps', type=float, default=1e-6, help='for IDISILIF only: numerical epsilon for threshold and decay')
@@ -156,6 +156,14 @@ def main():
     parser.add_argument('-tau_learn_alpha', action='store_true', help='for newLIF only: make alpha learnable')
     parser.add_argument('-tau_alpha_share', action='store_true', help='for newLIF only: share alpha_up and alpha_down')
     parser.add_argument('-tau_learn_eta', action='store_true', help='for newLIFTauDep/newCLIF only: make eta learnable')
+    parser.add_argument('-scr_r0', type=float, default=0.8, help='for SCRLIF only: base dynamic reset coefficient')
+    parser.add_argument('-scr_alpha_in', type=float, default=0.2, help='for SCRLIF only: input-cause reset coefficient')
+    parser.add_argument('-scr_alpha_exc', type=float, default=0.1, help='for SCRLIF only: overshoot reset coefficient')
+    parser.add_argument('-scr_alpha_isi', type=float, default=0.1, help='for SCRLIF only: short-ISI reset coefficient')
+    parser.add_argument('-scr_r_min', type=float, default=0.7, help='for SCRLIF only: lower clamp for dynamic reset coefficient')
+    parser.add_argument('-scr_r_max', type=float, default=1.2, help='for SCRLIF only: upper clamp for dynamic reset coefficient')
+    parser.add_argument('-scr_tau_isi', type=float, default=None, help='for SCRLIF only: ISI time constant; defaults to T')
+    parser.add_argument('-scr_init_isi', type=float, default=None, help='for SCRLIF only: initial distance from previous spike; defaults to scr_tau_isi')
     parser.add_argument('-history_weight', type=float, default=1.0, help='for LSLIF-family/TLIF only: auxiliary non-reset V branch weight')
     parser.add_argument('-history_power', type=float, default=1.0, help='for LSLIF-family/TLIF only: normalization power for non-reset V branch')
     parser.add_argument('-history_eps', type=float, default=1e-6, help='for LSLIF-family/TLIF only: epsilon for history normalization')
@@ -460,6 +468,8 @@ def main():
 
     if args.neuron_model == 'LIF':
         neuron_model = neuron.VanillaLIFNeuron
+    elif args.neuron_model == 'SCRLIF':
+        neuron_model = neuron.SCRLIFNeuron
     elif args.neuron_model == 'ZELIF':
         neuron_model = neuron.ZELIFNeuron
     elif args.neuron_model == 'IDISILIF':
@@ -527,6 +537,14 @@ def main():
         tau_learn_alpha=args.tau_learn_alpha,
         tau_alpha_share=args.tau_alpha_share,
         tau_learn_eta=args.tau_learn_eta,
+        scr_r0=args.scr_r0,
+        scr_alpha_in=args.scr_alpha_in,
+        scr_alpha_exc=args.scr_alpha_exc,
+        scr_alpha_isi=args.scr_alpha_isi,
+        scr_r_min=args.scr_r_min,
+        scr_r_max=args.scr_r_max,
+        scr_tau_isi=args.T if args.scr_tau_isi is None else args.scr_tau_isi,
+        scr_init_isi=args.scr_init_isi,
         dtlif_dt=args.dtlif_dt,
         dtlif_a=args.dtlif_a,
         dtlif_b=args.dtlif_b,
