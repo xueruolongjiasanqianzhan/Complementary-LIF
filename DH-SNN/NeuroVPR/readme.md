@@ -1,1 +1,0 @@
-Run the main.py train the model directly.
