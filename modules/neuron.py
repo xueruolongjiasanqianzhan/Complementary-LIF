@@ -1617,6 +1617,94 @@ class SCRLIFNeuron(ASNFireMixin, nn.Module):
         return spike.to(dtype=x.dtype)
 
 
+class SCRLIFV2Neuron(ASNFireMixin, nn.Module):
+    """Spike-Cause Reset LIF V2 neuron.
+
+    SCRLIFV2 keeps the vanilla LIF charge/fire rule and applies a
+    proportional complementary reset only to neurons that emit one spike. The
+    reset compares the decayed history contribution with the current input
+    contribution, using only their positive parts for the ratio. For example,
+    history=0.9 and input=0.3 gives mix=0.45 and reset membrane=1.2-0.45;
+    history=0.3 and input=0.9 gives the same mix and reset membrane=0.45.
+    """
+
+    def __init__(
+        self,
+        tau: float = 2.0,
+        decay_input: bool = False,
+        v_threshold: float = 1.0,
+        v_reset: Optional[float] = None,
+        surrogate_function: Optional[Callable] = None,
+        detach_reset: bool = False,
+        tau_eps: float = 1e-6,
+        asn_enable: bool = False,
+        asn_p: float = 0.5,
+        asn_rho: float = 0.5,
+        asn_seed: int = 2022,
+        asn_detach_lateral: bool = False,
+        layer_index: Optional[int] = None,
+        **kwargs,
+    ):
+        super().__init__()
+        self.tau = float(tau)
+        self.decay_input = bool(decay_input)
+        self.v_threshold = float(v_threshold)
+        self.v_reset = v_reset
+        if self.v_reset is not None:
+            raise ValueError('SCRLIFV2 uses soft reset and requires v_reset=None.')
+        self.detach_reset = bool(detach_reset)
+        self.tau_eps = float(tau_eps)
+        self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
+        self._init_asn(
+            asn_enable=asn_enable,
+            asn_p=asn_p,
+            asn_rho=asn_rho,
+            asn_seed=asn_seed,
+            asn_detach_lateral=asn_detach_lateral,
+            layer_index=layer_index,
+            **_success_modulation_kwargs(kwargs),
+        )
+        self.v = None
+
+    def reset(self):
+        self.v = None
+
+    def _ensure_state(self, x: torch.Tensor):
+        if self.v is None or self.v.shape != x.shape or self.v.device != x.device:
+            self.v = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+        tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
+        if self.decay_input:
+            hist = self.v * (1.0 - 1.0 / (tau_eff + self.tau_eps))
+            input_term = x_f / (tau_eff + self.tau_eps)
+            h_t = hist + input_term
+        else:
+            decay = 1.0 - 1.0 / (tau_eff + self.tau_eps)
+            decay = torch.clamp(decay, 0.0, 1.0)
+            hist = self.v * decay
+            input_term = x_f
+            h_t = hist + input_term
+
+        th_f = torch.as_tensor(self.v_threshold, device=h_t.device, dtype=h_t.dtype)
+        spike = self._success_fire(h_t, th_f)
+
+        eps = torch.as_tensor(self.tau_eps, device=h_t.device, dtype=h_t.dtype)
+        hist_pos = torch.relu(hist)
+        input_pos = torch.relu(input_term)
+        positive_total = hist_pos + input_pos
+        mix = 2.0 * hist_pos * input_pos / (positive_total + eps)
+        v_after_spike = torch.where(hist_pos >= input_pos, h_t - mix, mix)
+
+        rs = spike.detach() if self.detach_reset else spike
+        self.v = h_t + rs * (v_after_spike - h_t)
+        self._cache_success_spike(spike)
+        return spike.to(dtype=x.dtype)
+
+
+
 
 class VanillaLIFNeuron(ASNFireMixin, LIFNode_sj):
     def __init__(self, tau: float = 2., decay_input: bool = False, v_threshold: float = 1.,

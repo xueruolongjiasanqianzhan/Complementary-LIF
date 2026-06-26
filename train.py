@@ -125,7 +125,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), SCRLIF (Spike-Cause Reset LIF), HALIF, ZELIF, IDISILIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, QKVLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), SCRLIF (Spike-Cause Reset LIF), SCRLIFV2, HALIF, ZELIF, IDISILIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, QKVLIF, CLIF, PLIF, relu')
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
     parser.add_argument('-idisi_max_inverse_decay', type=float, default=8.0, help='for IDISILIF only: clamp for inverse-decay ISI credit')
     parser.add_argument('-idisi_eps', type=float, default=1e-6, help='for IDISILIF only: numerical epsilon for threshold and decay')
@@ -470,6 +470,8 @@ def main():
         neuron_model = neuron.VanillaLIFNeuron
     elif args.neuron_model == 'SCRLIF':
         neuron_model = neuron.SCRLIFNeuron
+    elif args.neuron_model == 'SCRLIFV2':
+        neuron_model = neuron.SCRLIFV2Neuron
     elif args.neuron_model == 'ZELIF':
         neuron_model = neuron.ZELIFNeuron
     elif args.neuron_model == 'IDISILIF':
