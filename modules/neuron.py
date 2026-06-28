@@ -1732,6 +1732,47 @@ class VanillaLIFNeuron(ASNFireMixin, LIFNode_sj):
 
 
 
+class SRLIFNeuron(LIFNode_sj):
+    """Synaptic Release LIF with deterministic learnable release threshold.
+
+    The soma LIF dynamics remain identical to vanilla LIF: the pre-reset
+    membrane decides the ordinary spike and that ordinary spike triggers reset.
+    The returned output is a second-stage synaptic release event, computed from
+    the same pre-reset membrane overshoot with the same surrogate function.
+    """
+
+    def __init__(self, tau: float = 2., decay_input: bool = False, v_threshold: float = 1.,
+                 v_reset: float = None, surrogate_function: Callable = Rectangle(),
+                 detach_reset: bool = False, cupy_fp32_inference=False,
+                 release_threshold_init: float = 0.0, **kwargs):
+        super().__init__(tau, decay_input, v_threshold, v_reset, surrogate_function, detach_reset, cupy_fp32_inference)
+        if release_threshold_init < 0.0:
+            raise ValueError('release_threshold_init must be non-negative.')
+        self.release_threshold = nn.Parameter(torch.tensor(float(release_threshold_init), dtype=torch.float32))
+        self.last_spike = None
+        self.last_release_spike = None
+        self.last_release_drive = None
+
+    def _get_release_threshold(self, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
+        return torch.clamp(self.release_threshold, min=0.0).to(dtype=dtype, device=device)
+
+    def forward(self, x: torch.Tensor):
+        LIFNode_sj.neuronal_charge(self, x)
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+        spike = self.surrogate_function(self.v - th_f)
+        release_drive = self.v - th_f
+        release_threshold = self._get_release_threshold(dtype=self.v.dtype, device=self.v.device)
+        release_gate = self.surrogate_function(release_drive - release_threshold)
+        release_spike = spike * release_gate
+        LIFNode_sj.neuronal_reset(self, spike)
+        self.last_spike = spike
+        self.last_release_spike = release_spike
+        self.last_release_drive = release_drive
+        return release_spike
+
+
+
+
 class IDISISpikeFunction(torch.autograd.Function):
     """Binary spike with ID-ISI-BP pseudo-gradient over one unrolled sequence.
 
