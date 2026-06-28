@@ -12,16 +12,31 @@ def _build_neuron(neuron: callable, kwargs: dict, zelif_kernel_size: int = 3):
     neuron_kwargs = dict(kwargs)
     counter = neuron_kwargs.get('_layer_counter')
     needs_layer_index = neuron_kwargs.get('history_mode', 'all') == 'half' or neuron_kwargs.get('asn_enable', False)
-    if needs_layer_index and isinstance(counter, dict):
+    idx = None
+    total = None
+    if isinstance(counter, dict):
         idx = int(counter.get('i', 0))
         total = int(max(1, counter.get('total', 1)))
-        neuron_kwargs['layer_index'] = idx
-        neuron_kwargs['total_layers'] = total
+        if needs_layer_index:
+            neuron_kwargs['layer_index'] = idx
+            neuron_kwargs['total_layers'] = total
         counter['i'] = idx + 1
+
+    tail_lif_layers = int(neuron_kwargs.pop('srlif_tail_lif_layers', 0) or 0)
+    tail_neuron = neuron_kwargs.pop('srlif_tail_neuron', None)
+    selected_neuron = neuron
+    if (getattr(neuron, '__name__', '') == 'SRLIFNeuron'
+            and tail_neuron is not None
+            and idx is not None
+            and total is not None
+            and tail_lif_layers > 0
+            and idx >= max(0, total - tail_lif_layers)):
+        selected_neuron = tail_neuron
+
     neuron_kwargs.pop('_layer_counter', None)
-    if getattr(neuron, '__name__', '') == 'ZELIFNeuron':
+    if getattr(selected_neuron, '__name__', '') == 'ZELIFNeuron':
         neuron_kwargs['zelif_kernel_size'] = int(zelif_kernel_size)
-    return neuron(**neuron_kwargs)
+    return selected_neuron(**neuron_kwargs)
 
 
 class SNN5(nn.Module):
