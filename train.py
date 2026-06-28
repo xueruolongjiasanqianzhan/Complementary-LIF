@@ -131,6 +131,7 @@ def main():
     parser.add_argument('-idisi_eps', type=float, default=1e-6, help='for IDISILIF only: numerical epsilon for threshold and decay')
     parser.add_argument('-release_threshold_init', type=float, default=0.0, help='for SRLIF only: initial shared synaptic release threshold')
     parser.add_argument('-v_threshold', type=float, default=1.0, help='shared soma firing threshold for LIF-family neurons; lower values usually increase spike/release rate')
+    parser.add_argument('-srlif_tail_lif_layers', type=int, default=2, help='for SRLIF only: build the last N neuron layers as Vanilla LIF for stable tail-layer activity; set 0 to use SRLIF everywhere')
     parser.add_argument('-asn_enable', action='store_true', help='enable ASN local lateral inhibition on 4D neuron maps')
     parser.add_argument('-asn_p', type=float, default=0.5, help='for ASN only: Bernoulli probability for ASN-like positions')
     parser.add_argument('-asn_rho', type=float, default=0.5, help='for ASN only: local lateral inhibition strength')
@@ -242,6 +243,8 @@ def main():
     args = parser.parse_args()
     if args.v_threshold <= 0.0:
         raise ValueError('-v_threshold must be positive.')
+    if args.srlif_tail_lif_layers < 0:
+        raise ValueError('-srlif_tail_lif_layers must be non-negative.')
     if args.neuron_model == 'LSLIF2' and (args.history_learn_power or abs(float(args.history_power) - 1.0) > 1e-12):
         print('警告: LSLIF2 使用总膜残余副膜；direct 模式直接叠加副膜，scaled_avg 模式固定 history_power=1.0 且不学习；history_growth 仅保留兼容但无效。')
         args.history_power = 1.0
@@ -535,6 +538,8 @@ def main():
         idisi_total_steps=args.T,
         idisi_eps=args.idisi_eps,
         release_threshold_init=args.release_threshold_init,
+        srlif_tail_lif_layers=args.srlif_tail_lif_layers,
+        srlif_tail_neuron=neuron.VanillaLIFNeuron,
         surrogate_function=surrogate_function,
         tau_mode=args.tau_mode,
         tau_lo=args.tau_lo,
@@ -747,6 +752,7 @@ def main():
     if args.neuron_model == 'SRLIF':
         run_name_parts.extend([
             f'释放阈值初值{args.release_threshold_init}',
+            f'尾部LIF层数{args.srlif_tail_lif_layers}',
         ])
     if args.neuron_model in ['newLIF', 'newLIFTauDep', 'newCLIF']:
         alpha_can_learn = '是' if args.tau_learn_alpha else '否'
