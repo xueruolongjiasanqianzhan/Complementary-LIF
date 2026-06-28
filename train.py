@@ -130,6 +130,7 @@ def main():
     parser.add_argument('-idisi_max_inverse_decay', type=float, default=8.0, help='for IDISILIF only: clamp for inverse-decay ISI credit')
     parser.add_argument('-idisi_eps', type=float, default=1e-6, help='for IDISILIF only: numerical epsilon for threshold and decay')
     parser.add_argument('-release_threshold_init', type=float, default=0.0, help='for SRLIF only: initial shared synaptic release threshold')
+    parser.add_argument('-v_threshold', type=float, default=1.0, help='shared soma firing threshold for LIF-family neurons; lower values usually increase spike/release rate')
     parser.add_argument('-asn_enable', action='store_true', help='enable ASN local lateral inhibition on 4D neuron maps')
     parser.add_argument('-asn_p', type=float, default=0.5, help='for ASN only: Bernoulli probability for ASN-like positions')
     parser.add_argument('-asn_rho', type=float, default=0.5, help='for ASN only: local lateral inhibition strength')
@@ -239,6 +240,8 @@ def main():
     parser.set_defaults(dgn_learn_c=True, dgn_learn_w=True, lifdgn_learn_g0=True, lifdgn_learn_c=True)
 
     args = parser.parse_args()
+    if args.v_threshold <= 0.0:
+        raise ValueError('-v_threshold must be positive.')
     if args.neuron_model == 'LSLIF2' and (args.history_learn_power or abs(float(args.history_power) - 1.0) > 1e-12):
         print('警告: LSLIF2 使用总膜残余副膜；direct 模式直接叠加副膜，scaled_avg 模式固定 history_power=1.0 且不学习；history_growth 仅保留兼容但无效。')
         args.history_power = 1.0
@@ -527,6 +530,7 @@ def main():
 
     neuron_kwargs = dict(
         tau=args.tau,
+        v_threshold=args.v_threshold,
         idisi_max_inverse_decay=args.idisi_max_inverse_decay,
         idisi_total_steps=args.T,
         idisi_eps=args.idisi_eps,
@@ -738,6 +742,7 @@ def main():
         f'神经元{args.neuron_model}',
         f'时间步数T{args.T}',
         f'轮数E{args.epochs}',
+        f'发放阈值{args.v_threshold}',
     ]
     if args.neuron_model == 'SRLIF':
         run_name_parts.extend([
