@@ -105,25 +105,44 @@ class IDISILinear(nn.Linear):
 class SynapticReleaseConv2d(nn.Conv2d):
     """Conv2d with a learnable release threshold for every conv synapse.
 
-    The threshold shape matches the convolution weight shape
-    ``[out_channels, in_channels, kernel_h, kernel_w]``.  When a presynaptic
-    pre-reset membrane tensor is provided, each unfolded input connection
-    releases by ``surrogate(v_pre[i, k] - release_threshold[o, i, k])`` and the
-    release event itself is used for the weighted sum.  The presynaptic soma
-    spike only controls reset in the preceding neuron; it is not required for
+    By default, the threshold shape matches the convolution weight shape
+    ``[out_channels, in_channels, kernel_h, kernel_w]``.  If
+    ``synaptic_release_groups`` is positive, synapses are deterministically
+    assigned to that many random groups and all synapses in a group share one
+    learnable threshold.  When a presynaptic pre-reset membrane tensor is
+    provided, each unfolded input connection releases by
+    ``surrogate(v_pre[i, k] - release_threshold[o, i, k])`` and the release event
+    itself is used for the weighted sum.  The presynaptic soma spike only
+    controls reset in the preceding neuron; it is not required for
     neurotransmitter release in this synaptic mode.
     """
 
     def __init__(
         self, *args, release_threshold_init=0.0, surrogate_function=None,
-        synaptic_release_chunk_size=16, **kwargs
+        synaptic_release_chunk_size=16, synaptic_release_groups=0,
+        synaptic_release_group_seed=2022, **kwargs
     ):
         super().__init__(*args, **kwargs)
         if release_threshold_init < 0.0:
             raise ValueError('release_threshold_init must be non-negative.')
         if synaptic_release_chunk_size <= 0:
             raise ValueError('synaptic_release_chunk_size must be positive.')
-        self.release_threshold = nn.Parameter(torch.full_like(self.weight, float(release_threshold_init)))
+        if synaptic_release_groups < 0:
+            raise ValueError('synaptic_release_groups must be non-negative.')
+        self.synaptic_release_groups = int(synaptic_release_groups)
+        if self.synaptic_release_groups > 0:
+            self.release_threshold = nn.Parameter(torch.full(
+                (self.synaptic_release_groups,), float(release_threshold_init),
+                dtype=self.weight.dtype, device=self.weight.device))
+            generator = torch.Generator(device='cpu')
+            generator.manual_seed(int(synaptic_release_group_seed))
+            group_index = torch.randint(
+                self.synaptic_release_groups, self.weight.shape,
+                generator=generator, dtype=torch.long)
+            self.register_buffer('release_group_index', group_index)
+        else:
+            self.release_threshold = nn.Parameter(torch.full_like(self.weight, float(release_threshold_init)))
+            self.register_buffer('release_group_index', None)
         self.surrogate_function = surrogate_function
         self.synaptic_release_chunk_size = int(synaptic_release_chunk_size)
         self.last_release_gate = None
@@ -131,7 +150,10 @@ class SynapticReleaseConv2d(nn.Conv2d):
         self.last_release_source = None
 
     def _get_release_threshold(self, dtype, device):
-        return torch.clamp(self.release_threshold, min=0.0).to(dtype=dtype, device=device)
+        release_threshold = torch.clamp(self.release_threshold, min=0.0)
+        if self.release_group_index is not None:
+            release_threshold = release_threshold[self.release_group_index]
+        return release_threshold.to(dtype=dtype, device=device)
 
     def forward(self, x, release_source=None):
         if release_source is None:
@@ -265,6 +287,8 @@ class SpikingVGGBN(nn.Module):
                         release_threshold_init=neuron_kwargs.get('release_threshold_init', 0.0),
                         surrogate_function=neuron_kwargs.get('surrogate_function', None),
                         synaptic_release_chunk_size=neuron_kwargs.get('synaptic_release_chunk_size', 16),
+                        synaptic_release_groups=neuron_kwargs.get('synaptic_release_groups', 0),
+                        synaptic_release_group_seed=neuron_kwargs.get('synaptic_release_group_seed', 2022),
                     ))
                 else:
                     layers.append(conv_cls(conv_in_channels, x, kernel_size=3, padding=1, bias=self.whether_bias))
