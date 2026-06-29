@@ -19,6 +19,13 @@
 #    -qkv_max_history 0：每个神经元缓存多少个历史时间步；0 表示保留当前样本序列内全部历史，正整数表示只保留最近 K 步以省显存/计算。
 #    -qkv_detach_history False：是否对缓存的历史膜电位和输入 detach；True 会省梯度图显存但切断跨历史步的 attention 梯度。
 #    -qkv_w_q/-qkv_w_k/-qkv_w_v 1.0：Q/K/V 的标量投影初值；-qkv_learn_w True 时会随模型参数一起训练。
+# 7) 突触级释放网络模式（当前支持 spiking_vgg*_bn）：
+#    -synaptic_release_enable：将 VGG 卷积替换为 SynapticReleaseConv2d；默认每个卷积突触都有独立可学习 release_threshold，
+#      形状与卷积权重一致 [out_channels, in_channels, kernel_h, kernel_w]；若设置 -synaptic_release_groups N，
+#      则将所有卷积突触按固定随机分组映射到 N 个可学习阈值，组内共享阈值，并使用 surrogate gradient 训练；
+#      开启后突触释放只由 presynaptic reset 前膜电位和突触阈值决定，胞体 spike 只负责 reset。
+#    -synaptic_release_chunk_size：按输出通道分块计算释放门，降低峰值显存；不改变 release gate 的数学判断。
+#    dvscifar10_fc2：两层隐藏全连接 SNN；开启 -synaptic_release_enable 后在隐藏层之间使用 SynapticReleaseLinear。
 
 ############################################################
 # CIFAR-10
@@ -26,6 +33,9 @@
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIF
+# SRLIF（Synaptic Release LIF；普通 spike 后增加确定性可学习释放阈值，reset 仍由原始 spike 触发）
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model SRLIF \
+  -release_threshold_init 0.0 -v_threshold 0.8 -srlif_release_ratio 0.5
 # SCRLIF（特有参数：spike-cause reset；q/r 仅在放电位置计算）
 python train.py -data_dir ./data_dir -dataset cifar10 -T_max 200 -epochs 200 -weight_decay 5e-5 -model spiking_resnet18 -neuron_model SCRLIF \
   -scr_r0 0.8 -scr_alpha_in 0.2 -scr_alpha_exc 0.1 -scr_alpha_isi 0.1 -scr_r_min 0.7 -scr_r_max 1.2 -scr_tau_isi 4 -scr_init_isi 4
@@ -125,6 +135,9 @@ python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIF
+# SRLIF（Synaptic Release LIF；普通 spike 后增加确定性可学习释放阈值，reset 仍由原始 spike 触发）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model SRLIF \
+  -release_threshold_init 0.0 -v_threshold 0.8 -srlif_release_ratio 0.5
 # SCRLIF（特有参数：spike-cause reset；q/r 仅在放电位置计算）
 python train.py -data_dir ./data_dir -dataset cifar100 -T_max 200 -epochs 200 -weight_decay 5e-5 -model spiking_resnet18 -neuron_model SCRLIF \
   -scr_r0 0.8 -scr_alpha_in 0.2 -scr_alpha_exc 0.1 -scr_alpha_isi 0.1 -scr_r_min 0.7 -scr_r_max 1.2 -scr_tau_isi 4 -scr_init_isi 4
@@ -224,6 +237,12 @@ python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIF
+# LIF + 突触级释放网络模式（用于和普通 LIF 对比；示例使用随机分组共享可学习释放阈值）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIF \
+  -release_threshold_init 0.6 -v_threshold 0.8 -synaptic_release_enable -synaptic_release_groups 64 -synaptic_release_chunk_size 16
+# SRLIF（Synaptic Release LIF；普通 spike 后增加确定性可学习释放阈值，reset 仍由原始 spike 触发）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model SRLIF \
+  -release_threshold_init 0.0 -v_threshold 0.8 -srlif_release_ratio 0.5 -synaptic_release_enable -synaptic_release_groups 64 -synaptic_release_chunk_size 16
 # SCRLIF（特有参数：spike-cause reset；q/r 仅在放电位置计算）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model SCRLIF \
   -scr_r0 0.8 -scr_alpha_in 0.2 -scr_alpha_exc 0.1 -scr_alpha_isi 0.1 -scr_r_min 0.7 -scr_r_max 1.2 -scr_tau_isi 4 -scr_init_isi 4
@@ -323,6 +342,16 @@ python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIF
+# 轻量两层全连接 SNN（用于快速验证突触释放思想；隐藏层之间可开启 SynapticReleaseLinear）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model dvscifar10_fc2 -lr 0.05 -mse_n_reg -neuron_model LIF
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model dvscifar10_fc2 -lr 0.05 -mse_n_reg -neuron_model LIF \
+  -release_threshold_init 0.6 -v_threshold 0.8 -synaptic_release_enable -synaptic_release_groups 64
+# LIF + 突触级释放网络模式（用于和普通 LIF 对比；示例使用随机分组共享可学习释放阈值）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIF \
+  -release_threshold_init 0.6 -v_threshold 0.8 -synaptic_release_enable -synaptic_release_groups 64 -synaptic_release_chunk_size 16
+# SRLIF（Synaptic Release LIF；普通 spike 后增加确定性可学习释放阈值，reset 仍由原始 spike 触发）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model SRLIF \
+  -release_threshold_init 0.0 -v_threshold 0.8 -srlif_release_ratio 0.5 -synaptic_release_enable -synaptic_release_groups 64 -synaptic_release_chunk_size 16
 # SCRLIF（特有参数：spike-cause reset；q/r 仅在放电位置计算）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model SCRLIF \
   -scr_r0 0.8 -scr_alpha_in 0.2 -scr_alpha_exc 0.1 -scr_alpha_isi 0.1 -scr_r_min 0.7 -scr_r_max 1.2 -scr_tau_isi 10 -scr_init_isi 10
@@ -426,6 +455,12 @@ python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -m
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIF
+# LIF + 突触级释放网络模式（用于和普通 LIF 对比；示例使用随机分组共享可学习释放阈值）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIF \
+  -release_threshold_init 0.6 -v_threshold 0.8 -synaptic_release_enable -synaptic_release_groups 64 -synaptic_release_chunk_size 16
+# SRLIF（Synaptic Release LIF；普通 spike 后增加确定性可学习释放阈值，reset 仍由原始 spike 触发）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model SRLIF \
+  -release_threshold_init 0.0 -v_threshold 0.8 -srlif_release_ratio 0.5 -synaptic_release_enable -synaptic_release_groups 64 -synaptic_release_chunk_size 16
 # SCRLIF（特有参数：spike-cause reset；q/r 仅在放电位置计算）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model SCRLIF \
   -scr_r0 0.8 -scr_alpha_in 0.2 -scr_alpha_exc 0.1 -scr_alpha_isi 0.1 -scr_r_min 0.7 -scr_r_max 1.2 -scr_tau_isi 20 -scr_init_isi 20
