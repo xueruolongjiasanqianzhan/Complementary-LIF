@@ -118,7 +118,7 @@ def main():
     parser.add_argument('-step_size', default=100, type=float, help='step_size for StepLR')
     parser.add_argument('-gamma', default=0.1, type=float, help='gamma for StepLR')
     parser.add_argument('-T_max', default=300, type=int, help='T_max for CosineAnnealingLR')
-    parser.add_argument('-model', type=str, default='spiking_vgg11_bn', help='use which SNN model')
+    parser.add_argument('-model', type=str, default='spiking_vgg11_bn', help='use which SNN model; includes dvscifar10_fc2 for a lightweight two-hidden-layer FC SNN')
     parser.add_argument('-drop_rate', type=float, default=0.0, help='dropout rate')
     parser.add_argument('-weight_decay', type=float, default=5e-4)
     parser.add_argument('-loss_lambda', type=float, default=0.05,  help='the scaling factor for the MSE term in the loss')
@@ -253,8 +253,8 @@ def main():
         raise ValueError('-synaptic_release_chunk_size must be positive.')
     if args.synaptic_release_groups < 0:
         raise ValueError('-synaptic_release_groups must be non-negative.')
-    if args.synaptic_release_enable and args.model not in ['spiking_vgg11_bn', 'spiking_vgg13_bn', 'spiking_vgg16_bn', 'spiking_vgg19_bn']:
-        raise NotImplementedError('-synaptic_release_enable is currently implemented for spiking_vgg*_bn models only.')
+    if args.synaptic_release_enable and args.model not in ['spiking_vgg11_bn', 'spiking_vgg13_bn', 'spiking_vgg16_bn', 'spiking_vgg19_bn', 'dvscifar10_fc2']:
+        raise NotImplementedError('-synaptic_release_enable is currently implemented for spiking_vgg*_bn and dvscifar10_fc2 models only.')
     if args.neuron_model == 'LSLIF2' and (args.history_learn_power or abs(float(args.history_power) - 1.0) > 1e-12):
         print('警告: LSLIF2 使用总膜残余副膜；direct 模式直接叠加副膜，scaled_avg 模式固定 history_power=1.0 且不学习；history_growth 仅保留兼容但无效。')
         args.history_power = 1.0
@@ -670,7 +670,7 @@ def main():
                                                   c_in=c_in,
                                                   fc_hw=in_dim if in_dim else None, **neuron_kwargs)
         print('using Spiking VGG model.')
-    elif args.model in ['vggsnn', 'snn5_noAP', 'dgn_dvscifar10_tiny']:  # lightweight option for DGN on DVS-CIFAR10
+    elif args.model in ['vggsnn', 'snn5_noAP', 'dgn_dvscifar10_tiny', 'dvscifar10_fc2']:  # lightweight options for DVS-CIFAR10
         net = vgg_model.__dict__[args.model](neuron=neuron_model, num_classes=num_classes,
                                              neuron_dropout=args.drop_rate,
                                              c_in=c_in,

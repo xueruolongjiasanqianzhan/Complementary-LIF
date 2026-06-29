@@ -19,12 +19,13 @@
 #    -qkv_max_history 0：每个神经元缓存多少个历史时间步；0 表示保留当前样本序列内全部历史，正整数表示只保留最近 K 步以省显存/计算。
 #    -qkv_detach_history False：是否对缓存的历史膜电位和输入 detach；True 会省梯度图显存但切断跨历史步的 attention 梯度。
 #    -qkv_w_q/-qkv_w_k/-qkv_w_v 1.0：Q/K/V 的标量投影初值；-qkv_learn_w True 时会随模型参数一起训练。
-# 7) 突触级释放网络模式（当前支持 spiking_vgg*_bn）：
-#    -synaptic_release_enable：将 VGG 卷积替换为 SynapticReleaseConv2d；默认每个卷积突触都有独立可学习 release_threshold，
-#      形状与卷积权重一致 [out_channels, in_channels, kernel_h, kernel_w]；若设置 -synaptic_release_groups N，
-#      则将所有卷积突触按固定随机分组映射到 N 个可学习阈值，组内共享阈值，并使用 surrogate gradient 训练；
-#      开启后突触释放只由 presynaptic reset 前膜电位和突触阈值决定，胞体 spike 只负责 reset。
-#    -synaptic_release_chunk_size：按输出通道分块计算释放门，降低峰值显存；不改变 release gate 的数学判断。
+# 7) 突触级释放网络模式（当前支持 spiking_vgg*_bn 和 dvscifar10_fc2）：
+#    -synaptic_release_enable：
+#      * spiking_vgg*_bn：将 VGG 卷积替换为 SynapticReleaseConv2d。
+#      * dvscifar10_fc2：在两层隐藏全连接之间使用 SynapticReleaseLinear，适合快速验证机制。
+#    -release_threshold_init：释放阈值初始值；-synaptic_release_groups N：将突触随机分成 N 组，组内共享一个可学习阈值。
+#    开启后突触释放只由 presynaptic reset 前膜电位和突触阈值决定，胞体 spike 只负责 reset。
+#    -synaptic_release_chunk_size：Conv 版本按输出通道分块计算释放门；FC 版本通常不需要设置该参数。
 
 ############################################################
 # CIFAR-10
@@ -339,8 +340,20 @@ python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13
 
 # 说明：沿用 DVS-CIFAR10 基础命令（T=10, drop_rate=0.3, lr=0.05, -mse_n_reg）。
 
-# LIF（vanilla，无额外特有参数）
+# LIF（vanilla，无额外特有参数；VGG 基线）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIF
+
+# 推荐：轻量两层全连接 SNN（用于快速验证突触释放思想）
+# FC-LIF 基线：Flatten -> FC1 -> LIF -> FC2 -> LIF -> classifier
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model dvscifar10_fc2 -lr 0.05 -mse_n_reg -neuron_model LIF \
+  -v_threshold 0.8
+# FC-LIF + SynapticReleaseLinear：hidden1 -> hidden2 使用分组共享可学习释放阈值
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model dvscifar10_fc2 -lr 0.05 -mse_n_reg -neuron_model LIF \
+  -release_threshold_init 0.6 -v_threshold 0.8 -synaptic_release_enable -synaptic_release_groups 64
+# 更少阈值组的快速消融：参数更少、速度更快，但表达能力更弱
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model dvscifar10_fc2 -lr 0.05 -mse_n_reg -neuron_model LIF \
+  -release_threshold_init 0.6 -v_threshold 0.8 -synaptic_release_enable -synaptic_release_groups 16
+
 # LIF + 突触级释放网络模式（用于和普通 LIF 对比；示例使用随机分组共享可学习释放阈值）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIF \
   -release_threshold_init 0.6 -v_threshold 0.8 -synaptic_release_enable -synaptic_release_groups 64 -synaptic_release_chunk_size 16
