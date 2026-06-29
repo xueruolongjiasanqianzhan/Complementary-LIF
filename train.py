@@ -119,6 +119,7 @@ def main():
     parser.add_argument('-gamma', default=0.1, type=float, help='gamma for StepLR')
     parser.add_argument('-T_max', default=300, type=int, help='T_max for CosineAnnealingLR')
     parser.add_argument('-model', type=str, default='spiking_vgg11_bn', help='use which SNN model; includes dvscifar10_fc2 for a lightweight two-hidden-layer FC SNN')
+    parser.add_argument('-fc_hidden_dim', type=int, default=1024, help='for dvscifar10_fc2 only: hidden neurons per fully connected hidden layer')
     parser.add_argument('-drop_rate', type=float, default=0.0, help='dropout rate')
     parser.add_argument('-weight_decay', type=float, default=5e-4)
     parser.add_argument('-loss_lambda', type=float, default=0.05,  help='the scaling factor for the MSE term in the loss')
@@ -247,6 +248,8 @@ def main():
     args = parser.parse_args()
     if args.v_threshold <= 0.0:
         raise ValueError('-v_threshold must be positive.')
+    if args.fc_hidden_dim <= 0:
+        raise ValueError('-fc_hidden_dim must be positive.')
     if not 0.0 <= args.srlif_release_ratio <= 1.0:
         raise ValueError('-srlif_release_ratio must be in [0, 1].')
     if args.synaptic_release_chunk_size <= 0:
@@ -553,6 +556,7 @@ def main():
         synaptic_release_chunk_size=args.synaptic_release_chunk_size,
         synaptic_release_groups=args.synaptic_release_groups,
         synaptic_release_group_seed=args.synaptic_release_group_seed,
+        hidden_dim=args.fc_hidden_dim,
         surrogate_function=surrogate_function,
         tau_mode=args.tau_mode,
         tau_lo=args.tau_lo,
@@ -766,6 +770,8 @@ def main():
     if args.synaptic_release_enable:
         run_name_parts.append(f'突触释放chunk{args.synaptic_release_chunk_size}')
         run_name_parts.append(f'突触阈值组数{args.synaptic_release_groups}')
+    if args.model == 'dvscifar10_fc2':
+        run_name_parts.append(f'FC隐藏神经元{args.fc_hidden_dim}')
     if args.neuron_model == 'SRLIF':
         run_name_parts.extend([
             f'释放阈值初值{args.release_threshold_init}',
