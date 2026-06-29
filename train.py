@@ -118,17 +118,25 @@ def main():
     parser.add_argument('-step_size', default=100, type=float, help='step_size for StepLR')
     parser.add_argument('-gamma', default=0.1, type=float, help='gamma for StepLR')
     parser.add_argument('-T_max', default=300, type=int, help='T_max for CosineAnnealingLR')
-    parser.add_argument('-model', type=str, default='spiking_vgg11_bn', help='use which SNN model')
+    parser.add_argument('-model', type=str, default='spiking_vgg11_bn', help='use which SNN model; includes dvscifar10_fc2 for a lightweight two-hidden-layer FC SNN')
+    parser.add_argument('-fc_hidden_dim', type=int, default=1024, help='for dvscifar10_fc2 only: hidden neurons per fully connected hidden layer')
     parser.add_argument('-drop_rate', type=float, default=0.0, help='dropout rate')
     parser.add_argument('-weight_decay', type=float, default=5e-4)
     parser.add_argument('-loss_lambda', type=float, default=0.05,  help='the scaling factor for the MSE term in the loss')
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), SCRLIF (Spike-Cause Reset LIF), SCRLIFV2, HALIF, ZELIF, IDISILIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, QKVLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), SRLIF (Synaptic Release LIF), SCRLIF (Spike-Cause Reset LIF), SCRLIFV2, HALIF, ZELIF, IDISILIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, QKVLIF, CLIF, PLIF, relu')
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
     parser.add_argument('-idisi_max_inverse_decay', type=float, default=8.0, help='for IDISILIF only: clamp for inverse-decay ISI credit')
     parser.add_argument('-idisi_eps', type=float, default=1e-6, help='for IDISILIF only: numerical epsilon for threshold and decay')
+    parser.add_argument('-release_threshold_init', type=float, default=0.0, help='for SRLIF and synaptic release Conv2d: initial release threshold')
+    parser.add_argument('-v_threshold', type=float, default=1.0, help='shared soma firing threshold for LIF-family neurons; lower values usually increase spike/release rate')
+    parser.add_argument('-srlif_release_ratio', type=float, default=0.5, help='for SRLIF only: fraction of output paths gated by the learnable release threshold; remaining paths transmit ordinary LIF spikes')
+    parser.add_argument('-synaptic_release_enable', action='store_true', help='enable per-synapse learnable release thresholds inside supported Conv2d layers')
+    parser.add_argument('-synaptic_release_chunk_size', type=int, default=16, help='for synaptic release Conv2d: output channels processed per chunk to reduce peak activation memory')
+    parser.add_argument('-synaptic_release_groups', type=int, default=0, help='for synaptic release Conv2d: number of random threshold-sharing groups; 0 keeps one threshold per synapse')
+    parser.add_argument('-synaptic_release_group_seed', type=int, default=2022, help='for synaptic release Conv2d: random seed for deterministic synapse-to-threshold-group assignment')
     parser.add_argument('-asn_enable', action='store_true', help='enable ASN local lateral inhibition on 4D neuron maps')
     parser.add_argument('-asn_p', type=float, default=0.5, help='for ASN only: Bernoulli probability for ASN-like positions')
     parser.add_argument('-asn_rho', type=float, default=0.5, help='for ASN only: local lateral inhibition strength')
@@ -238,6 +246,18 @@ def main():
     parser.set_defaults(dgn_learn_c=True, dgn_learn_w=True, lifdgn_learn_g0=True, lifdgn_learn_c=True)
 
     args = parser.parse_args()
+    if args.v_threshold <= 0.0:
+        raise ValueError('-v_threshold must be positive.')
+    if args.fc_hidden_dim <= 0:
+        raise ValueError('-fc_hidden_dim must be positive.')
+    if not 0.0 <= args.srlif_release_ratio <= 1.0:
+        raise ValueError('-srlif_release_ratio must be in [0, 1].')
+    if args.synaptic_release_chunk_size <= 0:
+        raise ValueError('-synaptic_release_chunk_size must be positive.')
+    if args.synaptic_release_groups < 0:
+        raise ValueError('-synaptic_release_groups must be non-negative.')
+    if args.synaptic_release_enable and args.model not in ['spiking_vgg11_bn', 'spiking_vgg13_bn', 'spiking_vgg16_bn', 'spiking_vgg19_bn', 'dvscifar10_fc2']:
+        raise NotImplementedError('-synaptic_release_enable is currently implemented for spiking_vgg*_bn and dvscifar10_fc2 models only.')
     if args.neuron_model == 'LSLIF2' and (args.history_learn_power or abs(float(args.history_power) - 1.0) > 1e-12):
         print('警告: LSLIF2 使用总膜残余副膜；direct 模式直接叠加副膜，scaled_avg 模式固定 history_power=1.0 且不学习；history_growth 仅保留兼容但无效。')
         args.history_power = 1.0
@@ -468,6 +488,8 @@ def main():
 
     if args.neuron_model == 'LIF':
         neuron_model = neuron.VanillaLIFNeuron
+    elif args.neuron_model == 'SRLIF':
+        neuron_model = neuron.SRLIFNeuron
     elif args.neuron_model == 'SCRLIF':
         neuron_model = neuron.SCRLIFNeuron
     elif args.neuron_model == 'SCRLIFV2':
@@ -524,9 +546,17 @@ def main():
 
     neuron_kwargs = dict(
         tau=args.tau,
+        v_threshold=args.v_threshold,
         idisi_max_inverse_decay=args.idisi_max_inverse_decay,
         idisi_total_steps=args.T,
         idisi_eps=args.idisi_eps,
+        release_threshold_init=args.release_threshold_init,
+        srlif_release_ratio=args.srlif_release_ratio,
+        synaptic_release_enable=args.synaptic_release_enable,
+        synaptic_release_chunk_size=args.synaptic_release_chunk_size,
+        synaptic_release_groups=args.synaptic_release_groups,
+        synaptic_release_group_seed=args.synaptic_release_group_seed,
+        hidden_dim=args.fc_hidden_dim,
         surrogate_function=surrogate_function,
         tau_mode=args.tau_mode,
         tau_lo=args.tau_lo,
@@ -644,7 +674,7 @@ def main():
                                                   c_in=c_in,
                                                   fc_hw=in_dim if in_dim else None, **neuron_kwargs)
         print('using Spiking VGG model.')
-    elif args.model in ['vggsnn', 'snn5_noAP', 'dgn_dvscifar10_tiny']:  # lightweight option for DGN on DVS-CIFAR10
+    elif args.model in ['vggsnn', 'snn5_noAP', 'dgn_dvscifar10_tiny', 'dvscifar10_fc2']:  # lightweight options for DVS-CIFAR10
         net = vgg_model.__dict__[args.model](neuron=neuron_model, num_classes=num_classes,
                                              neuron_dropout=args.drop_rate,
                                              c_in=c_in,
@@ -734,7 +764,19 @@ def main():
         f'神经元{args.neuron_model}',
         f'时间步数T{args.T}',
         f'轮数E{args.epochs}',
+        f'发放阈值{args.v_threshold}',
+        f'突触级释放{"是" if args.synaptic_release_enable else "否"}',
     ]
+    if args.synaptic_release_enable:
+        run_name_parts.append(f'突触释放chunk{args.synaptic_release_chunk_size}')
+        run_name_parts.append(f'突触阈值组数{args.synaptic_release_groups}')
+    if args.model == 'dvscifar10_fc2':
+        run_name_parts.append(f'FC隐藏神经元{args.fc_hidden_dim}')
+    if args.neuron_model == 'SRLIF':
+        run_name_parts.extend([
+            f'释放阈值初值{args.release_threshold_init}',
+            f'释放门控比例{args.srlif_release_ratio}',
+        ])
     if args.neuron_model in ['newLIF', 'newLIFTauDep', 'newCLIF']:
         alpha_can_learn = '是' if args.tau_learn_alpha else '否'
         eta_can_learn = '是' if args.tau_learn_eta else '否'
