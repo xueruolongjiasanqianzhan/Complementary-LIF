@@ -1732,6 +1732,85 @@ class VanillaLIFNeuron(ASNFireMixin, LIFNode_sj):
 
 
 
+class SRLIFNeuron(LIFNode_sj):
+    """Synaptic Release LIF with deterministic learnable release threshold.
+
+    The soma LIF dynamics remain identical to vanilla LIF: the pre-reset
+    membrane decides the ordinary spike and that ordinary spike triggers reset.
+    A deterministic subset of output paths is gated by a second-stage synaptic
+    release event, while the remaining paths transmit the ordinary spike just
+    like vanilla LIF.
+    """
+
+    def __init__(self, tau: float = 2., decay_input: bool = False, v_threshold: float = 1.,
+                 v_reset: float = None, surrogate_function: Callable = Rectangle(),
+                 detach_reset: bool = False, cupy_fp32_inference=False,
+                 release_threshold_init: float = 0.0, srlif_release_ratio: float = 0.5, **kwargs):
+        super().__init__(tau, decay_input, v_threshold, v_reset, surrogate_function, detach_reset, cupy_fp32_inference)
+        if release_threshold_init < 0.0:
+            raise ValueError('release_threshold_init must be non-negative.')
+        if not 0.0 <= srlif_release_ratio <= 1.0:
+            raise ValueError('srlif_release_ratio must be in [0, 1].')
+        self.release_threshold = nn.Parameter(torch.tensor(float(release_threshold_init), dtype=torch.float32))
+        self.srlif_release_ratio = float(srlif_release_ratio)
+        self.last_spike = None
+        self.last_release_spike = None
+        self.last_release_drive = None
+        self.last_release_path_mask = None
+
+    def _get_release_threshold(self, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
+        return torch.clamp(self.release_threshold, min=0.0).to(dtype=dtype, device=device)
+
+    def _get_release_path_mask(self, spike: torch.Tensor) -> torch.Tensor:
+        """Return a deterministic mask for paths that use the release threshold.
+
+        A mask value of 1 means the path is SRLIF-gated.  A mask value of 0 means
+        the path behaves like vanilla LIF and transmits the ordinary spike.
+        """
+        if self.srlif_release_ratio <= 0.0:
+            return torch.zeros_like(spike)
+        if self.srlif_release_ratio >= 1.0:
+            return torch.ones_like(spike)
+
+        mask_shape = [1] + list(spike.shape[1:]) if spike.dim() > 1 else list(spike.shape)
+        num_paths = 1
+        for dim in mask_shape:
+            num_paths *= int(dim)
+        num_gated = int(round(num_paths * self.srlif_release_ratio))
+        if num_gated <= 0:
+            return torch.zeros(mask_shape, dtype=spike.dtype, device=spike.device).expand_as(spike)
+        if num_gated >= num_paths:
+            return torch.ones(mask_shape, dtype=spike.dtype, device=spike.device).expand_as(spike)
+
+        flat_mask = torch.zeros(num_paths, dtype=spike.dtype, device=spike.device)
+        gated_idx = torch.div(
+            torch.arange(num_gated, device=spike.device) * num_paths,
+            num_gated,
+            rounding_mode='floor',
+        )
+        flat_mask[gated_idx.long()] = 1.0
+        return flat_mask.view(mask_shape).expand_as(spike)
+
+    def forward(self, x: torch.Tensor):
+        LIFNode_sj.neuronal_charge(self, x)
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+        spike = self.surrogate_function(self.v - th_f)
+        release_drive = self.v - th_f
+        release_threshold = self._get_release_threshold(dtype=self.v.dtype, device=self.v.device)
+        release_gate = self.surrogate_function(release_drive - release_threshold)
+        release_path_mask = self._get_release_path_mask(spike)
+        effective_release_gate = release_path_mask * release_gate + (1.0 - release_path_mask)
+        release_spike = spike * effective_release_gate
+        LIFNode_sj.neuronal_reset(self, spike)
+        self.last_spike = spike
+        self.last_release_spike = release_spike
+        self.last_release_drive = release_drive
+        self.last_release_path_mask = release_path_mask
+        return release_spike
+
+
+
+
 class IDISISpikeFunction(torch.autograd.Function):
     """Binary spike with ID-ISI-BP pseudo-gradient over one unrolled sequence.
 
