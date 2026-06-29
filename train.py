@@ -133,6 +133,7 @@ def main():
     parser.add_argument('-v_threshold', type=float, default=1.0, help='shared soma firing threshold for LIF-family neurons; lower values usually increase spike/release rate')
     parser.add_argument('-srlif_release_ratio', type=float, default=0.5, help='for SRLIF only: fraction of output paths gated by the learnable release threshold; remaining paths transmit ordinary LIF spikes')
     parser.add_argument('-synaptic_release_enable', action='store_true', help='enable per-synapse learnable release thresholds inside supported Conv2d layers')
+    parser.add_argument('-synaptic_release_chunk_size', type=int, default=16, help='for synaptic release Conv2d: output channels processed per chunk to reduce peak activation memory')
     parser.add_argument('-asn_enable', action='store_true', help='enable ASN local lateral inhibition on 4D neuron maps')
     parser.add_argument('-asn_p', type=float, default=0.5, help='for ASN only: Bernoulli probability for ASN-like positions')
     parser.add_argument('-asn_rho', type=float, default=0.5, help='for ASN only: local lateral inhibition strength')
@@ -246,6 +247,8 @@ def main():
         raise ValueError('-v_threshold must be positive.')
     if not 0.0 <= args.srlif_release_ratio <= 1.0:
         raise ValueError('-srlif_release_ratio must be in [0, 1].')
+    if args.synaptic_release_chunk_size <= 0:
+        raise ValueError('-synaptic_release_chunk_size must be positive.')
     if args.synaptic_release_enable and args.model not in ['spiking_vgg11_bn', 'spiking_vgg13_bn', 'spiking_vgg16_bn', 'spiking_vgg19_bn']:
         raise NotImplementedError('-synaptic_release_enable is currently implemented for spiking_vgg*_bn models only.')
     if args.neuron_model == 'LSLIF2' and (args.history_learn_power or abs(float(args.history_power) - 1.0) > 1e-12):
@@ -543,6 +546,7 @@ def main():
         release_threshold_init=args.release_threshold_init,
         srlif_release_ratio=args.srlif_release_ratio,
         synaptic_release_enable=args.synaptic_release_enable,
+        synaptic_release_chunk_size=args.synaptic_release_chunk_size,
         surrogate_function=surrogate_function,
         tau_mode=args.tau_mode,
         tau_lo=args.tau_lo,
@@ -753,6 +757,8 @@ def main():
         f'发放阈值{args.v_threshold}',
         f'突触级释放{"是" if args.synaptic_release_enable else "否"}',
     ]
+    if args.synaptic_release_enable:
+        run_name_parts.append(f'突触释放chunk{args.synaptic_release_chunk_size}')
     if args.neuron_model == 'SRLIF':
         run_name_parts.extend([
             f'释放阈值初值{args.release_threshold_init}',

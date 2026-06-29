@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from spikingjelly.clock_driven import layer
 
 __all__ = [
@@ -113,13 +114,20 @@ class SynapticReleaseConv2d(nn.Conv2d):
     neurotransmitter release in this synaptic mode.
     """
 
-    def __init__(self, *args, release_threshold_init=0.0, surrogate_function=None, **kwargs):
+    def __init__(
+        self, *args, release_threshold_init=0.0, surrogate_function=None,
+        synaptic_release_chunk_size=16, **kwargs
+    ):
         super().__init__(*args, **kwargs)
         if release_threshold_init < 0.0:
             raise ValueError('release_threshold_init must be non-negative.')
+        if synaptic_release_chunk_size <= 0:
+            raise ValueError('synaptic_release_chunk_size must be positive.')
         self.release_threshold = nn.Parameter(torch.full_like(self.weight, float(release_threshold_init)))
         self.surrogate_function = surrogate_function
+        self.synaptic_release_chunk_size = int(synaptic_release_chunk_size)
         self.last_release_gate = None
+        self.last_release_gate_mean = None
         self.last_release_source = None
 
     def _get_release_threshold(self, dtype, device):
@@ -138,19 +146,44 @@ class SynapticReleaseConv2d(nn.Conv2d):
         weight_flat = self.weight.view(self.out_channels, in_kernel)
         threshold_flat = self._get_release_threshold(dtype=x.dtype, device=x.device).view(self.out_channels, in_kernel)
 
-        release_arg = v_cols.unsqueeze(1) - threshold_flat.view(1, self.out_channels, in_kernel, 1)
-        if self.surrogate_function is None:
-            release_gate = (release_arg >= 0.0).to(dtype=x.dtype)
-        else:
-            release_gate = self.surrogate_function(release_arg)
-        out = (release_gate * weight_flat.view(1, self.out_channels, in_kernel, 1)).sum(dim=2)
+        def release_chunk(v_cols_chunk, weight_chunk, threshold_chunk):
+            release_arg = v_cols_chunk.unsqueeze(1) - threshold_chunk.view(1, weight_chunk.shape[0], in_kernel, 1)
+            if self.surrogate_function is None:
+                release_gate = (release_arg >= 0.0).to(dtype=x.dtype)
+            else:
+                release_gate = self.surrogate_function(release_arg)
+            return (release_gate * weight_chunk.view(1, weight_chunk.shape[0], in_kernel, 1)).sum(dim=2)
+
+        out_chunks = []
+        gate_sum = v_cols.new_zeros(())
+        gate_count = 0
+        chunk_size = min(self.synaptic_release_chunk_size, self.out_channels)
+        for start in range(0, self.out_channels, chunk_size):
+            end = min(start + chunk_size, self.out_channels)
+            weight_chunk = weight_flat[start:end]
+            threshold_chunk = threshold_flat[start:end]
+            if self.training and torch.is_grad_enabled():
+                out_chunk = checkpoint(release_chunk, v_cols, weight_chunk, threshold_chunk, use_reentrant=False)
+            else:
+                out_chunk = release_chunk(v_cols, weight_chunk, threshold_chunk)
+            out_chunks.append(out_chunk)
+            with torch.no_grad():
+                release_arg = v_cols.unsqueeze(1) - threshold_chunk.view(1, end - start, in_kernel, 1)
+                if self.surrogate_function is None:
+                    gate_chunk = (release_arg >= 0.0).to(dtype=x.dtype)
+                else:
+                    gate_chunk = self.surrogate_function(release_arg)
+                gate_sum = gate_sum + gate_chunk.detach().sum()
+                gate_count += gate_chunk.numel()
+        out = torch.cat(out_chunks, dim=1)
         if self.bias is not None:
             out = out + self.bias.view(1, -1, 1)
 
         out_h = (x.shape[-2] + 2 * self.padding[0] - self.dilation[0] * (self.kernel_size[0] - 1) - 1) // self.stride[0] + 1
         out_w = (x.shape[-1] + 2 * self.padding[1] - self.dilation[1] * (self.kernel_size[1] - 1) - 1) // self.stride[1] + 1
-        self.last_release_gate = release_gate
-        self.last_release_source = release_source
+        self.last_release_gate = None
+        self.last_release_gate_mean = gate_sum / max(1, gate_count)
+        self.last_release_source = release_source.detach()
         return out.view(batch_size, self.out_channels, out_h, out_w)
 
 
@@ -231,6 +264,7 @@ class SpikingVGGBN(nn.Module):
                         conv_in_channels, x, kernel_size=3, padding=1, bias=self.whether_bias,
                         release_threshold_init=neuron_kwargs.get('release_threshold_init', 0.0),
                         surrogate_function=neuron_kwargs.get('surrogate_function', None),
+                        synaptic_release_chunk_size=neuron_kwargs.get('synaptic_release_chunk_size', 16),
                     ))
                 else:
                     layers.append(conv_cls(conv_in_channels, x, kernel_size=3, padding=1, bias=self.whether_bias))
