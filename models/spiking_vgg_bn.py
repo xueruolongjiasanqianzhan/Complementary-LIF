@@ -271,6 +271,14 @@ class SpikingVGGBN(nn.Module):
                 if self.history_mode == 'half' or neuron_kwargs.get('asn_enable', False):
                     neuron_kwargs['layer_index'] = self.layer_index
                     neuron_kwargs['total_layers'] = self.total_neuron_layers
+                tail_lif_layers = int(neuron_kwargs.pop('srlif_tail_lif_layers', 0) or 0)
+                tail_neuron = neuron_kwargs.pop('srlif_tail_neuron', None)
+                selected_neuron = neuron
+                if (getattr(neuron, '__name__', '') == 'SRLIFNeuron'
+                        and tail_neuron is not None
+                        and tail_lif_layers > 0
+                        and self.layer_index >= max(0, self.total_neuron_layers - tail_lif_layers)):
+                    selected_neuron = tail_neuron
                 conv_in_channels = self.init_channels
                 conv_cls = IDISIConv2d if getattr(neuron, '__name__', '') == 'IDISILIFNeuron' else nn.Conv2d
                 if self.synaptic_release_enable:
@@ -285,9 +293,9 @@ class SpikingVGGBN(nn.Module):
                 else:
                     layers.append(conv_cls(conv_in_channels, x, kernel_size=3, padding=1, bias=self.whether_bias))
                 layers.append(nn.BatchNorm2d(x))
-                if getattr(neuron, '__name__', '') == 'IDISILIFNeuron':
+                if getattr(selected_neuron, '__name__', '') == 'IDISILIFNeuron':
                     neuron_kwargs['idisi_fan_in'] = conv_in_channels * 3 * 3
-                layers.append(neuron(**neuron_kwargs))
+                layers.append(selected_neuron(**neuron_kwargs))
                 layers.append(layer.Dropout(dropout))
                 self.init_channels = x
                 self.layer_index += 1
