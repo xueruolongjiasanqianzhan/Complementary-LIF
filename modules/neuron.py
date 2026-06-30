@@ -359,9 +359,11 @@ def ternary_spike_activation(x: torch.Tensor, binary: bool = False, temp: float 
 class TernarySpikeNeuron(SuccessModulationMixin, nn.Module):
     """LIF neuron that emits ternary spikes {-1, 0, +1}.
 
-    The membrane follows ``mem = mem * decay + x`` and fires on the normalized
-    membrane ``mem / v_threshold`` with a dead zone of (-0.5, 0.5). Firing sites
-    are softly reset to zero for both positive and negative ternary spikes.
+    This is aligned with ``三值神经元/models/spike_layer.py``: membrane
+    follows the fixed-decay update ``mem = mem * 0.25 + x`` by default, then
+    fires on normalized membrane ``mem / v_threshold`` with a dead zone of
+    (-0.5, 0.5). Firing sites are reset to zero for both positive and
+    negative ternary spikes.
     """
 
     def __init__(
@@ -374,6 +376,7 @@ class TernarySpikeNeuron(SuccessModulationMixin, nn.Module):
         tau_eps: float = 1e-6,
         fire_ratio: float = 1.0,
         temp: float = 3.0,
+        ternary_decay: float = 0.25,
         **kwargs,
     ):
         super().__init__()
@@ -385,6 +388,7 @@ class TernarySpikeNeuron(SuccessModulationMixin, nn.Module):
         self.tau_eps = float(tau_eps)
         self.fire_ratio = float(fire_ratio)
         self.temp = float(temp)
+        self.ternary_decay = float(ternary_decay)
         self._init_success_modulation(**_success_modulation_kwargs(kwargs))
         self.v = None
 
@@ -403,12 +407,8 @@ class TernarySpikeNeuron(SuccessModulationMixin, nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         self._ensure_state(x)
         x_f = x.to(torch.float32)
-        tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
-        if self.decay_input:
-            mem = self.v + (x_f - self.v) / (tau_eff + self.tau_eps)
-        else:
-            decay = torch.clamp(1.0 - 1.0 / (tau_eff + self.tau_eps), 0.0, 1.0)
-            mem = self.v * decay + x_f
+        decay = torch.as_tensor(self.ternary_decay, device=self.v.device, dtype=self.v.dtype)
+        mem = self.v * decay + x_f
         spike = self._ternary_fire(mem)
         rs = spike.detach() if self.detach_reset else spike
         if self.v_reset is None:
