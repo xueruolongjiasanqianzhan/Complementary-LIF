@@ -35,6 +35,11 @@
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIF
+# Ternary（三值脉冲神经元，输出 {-1,0,+1}；按 v_threshold 归一化后在 ±0.5 处触发，正/负 spike 均软重置）
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model Ternary
+# LSTernary（三值脉冲神经元 + LSLIF 风格 LS/history 支路）
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSTernary \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 # SRLIF（Synaptic Release LIF；普通 spike 后增加确定性可学习释放阈值，reset 仍由原始 spike 触发）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model SRLIF \
   -release_threshold_init 1.0 -v_threshold 0.8 -srlif_release_ratio 0.5
@@ -137,6 +142,11 @@ python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIF
+# Ternary（三值脉冲神经元，输出 {-1,0,+1}；按 v_threshold 归一化后在 ±0.5 处触发，正/负 spike 均软重置）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model Ternary
+# LSTernary（三值脉冲神经元 + LSLIF 风格 LS/history 支路）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSTernary \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 # SRLIF（Synaptic Release LIF；普通 spike 后增加确定性可学习释放阈值，reset 仍由原始 spike 触发）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model SRLIF \
   -release_threshold_init 1.0 -v_threshold 0.8 -srlif_release_ratio 0.5
@@ -239,6 +249,11 @@ python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIF
+# Ternary（三值脉冲神经元，输出 {-1,0,+1}；按 v_threshold 归一化后在 ±0.5 处触发，正/负 spike 均软重置）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model Ternary
+# LSTernary（三值脉冲神经元 + LSLIF 风格 LS/history 支路）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSTernary \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 # LIF + 突触级释放网络模式（用于和普通 LIF 对比；示例使用随机分组共享可学习释放阈值）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIF \
   -release_threshold_init 1.0 -v_threshold 0.8 -synaptic_release_enable -synaptic_release_groups 64 -synaptic_release_fixed_threshold_ratio 0.5 -synaptic_release_chunk_size 16
@@ -344,6 +359,11 @@ python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13
 
 # LIF（vanilla，无额外特有参数；VGG 基线）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIF
+# Ternary（三值脉冲神经元，输出 {-1,0,+1}；按 v_threshold 归一化后在 ±0.5 处触发，正/负 spike 均软重置）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model Ternary
+# LSTernary（三值脉冲神经元 + LSLIF 风格 LS/history 支路）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSTernary \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
 # 推荐：轻量两层全连接 SNN（用于快速验证突触释放思想）
 # FC-LIF 基线：Flatten -> FC1 -> LIF -> FC2 -> LIF -> classifier
@@ -465,6 +485,11 @@ python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -m
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIF
+# Ternary（三值脉冲神经元，输出 {-1,0,+1}；按 v_threshold 归一化后在 ±0.5 处触发，正/负 spike 均软重置）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model Ternary
+# LSTernary（三值脉冲神经元 + LSLIF 风格 LS/history 支路）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSTernary \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 # LIF + 突触级释放网络模式（用于和普通 LIF 对比；示例使用随机分组共享可学习释放阈值）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIF \
   -release_threshold_init 1.0 -v_threshold 0.8 -synaptic_release_enable -synaptic_release_groups 64 -synaptic_release_fixed_threshold_ratio 0.5 -synaptic_release_chunk_size 16
