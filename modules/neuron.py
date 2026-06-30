@@ -1746,10 +1746,10 @@ class SRLIFNeuron(LIFNode_sj):
     def __init__(self, tau: float = 2., decay_input: bool = False, v_threshold: float = 1.,
                  v_reset: float = None, surrogate_function: Callable = Rectangle(),
                  detach_reset: bool = False, cupy_fp32_inference=False,
-                 release_threshold_init: float = 0.0, srlif_release_ratio: float = 0.5, **kwargs):
+                 release_threshold_init: float = 1.0, srlif_release_ratio: float = 0.5, **kwargs):
         super().__init__(tau, decay_input, v_threshold, v_reset, surrogate_function, detach_reset, cupy_fp32_inference)
-        if release_threshold_init < 0.0:
-            raise ValueError('release_threshold_init must be non-negative.')
+        if release_threshold_init < v_threshold:
+            raise ValueError('release_threshold_init must be at least v_threshold.')
         if not 0.0 <= srlif_release_ratio <= 1.0:
             raise ValueError('srlif_release_ratio must be in [0, 1].')
         self.release_threshold = nn.Parameter(torch.tensor(float(release_threshold_init), dtype=torch.float32))
@@ -1760,7 +1760,7 @@ class SRLIFNeuron(LIFNode_sj):
         self.last_release_path_mask = None
 
     def _get_release_threshold(self, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
-        return torch.clamp(self.release_threshold, min=0.0).to(dtype=dtype, device=device)
+        return torch.clamp(self.release_threshold, min=float(self.v_threshold)).to(dtype=dtype, device=device)
 
     def _get_release_path_mask(self, spike: torch.Tensor) -> torch.Tensor:
         """Return a deterministic mask for paths that use the release threshold.

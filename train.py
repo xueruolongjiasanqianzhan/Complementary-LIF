@@ -130,12 +130,13 @@ def main():
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
     parser.add_argument('-idisi_max_inverse_decay', type=float, default=8.0, help='for IDISILIF only: clamp for inverse-decay ISI credit')
     parser.add_argument('-idisi_eps', type=float, default=1e-6, help='for IDISILIF only: numerical epsilon for threshold and decay')
-    parser.add_argument('-release_threshold_init', type=float, default=0.0, help='for SRLIF and synaptic release Conv2d: initial release threshold')
+    parser.add_argument('-release_threshold_init', type=float, default=1.0, help='for SRLIF and synaptic release layers: initial release threshold, constrained to [v_threshold, +inf)')
     parser.add_argument('-v_threshold', type=float, default=1.0, help='shared soma firing threshold for LIF-family neurons; lower values usually increase spike/release rate')
     parser.add_argument('-srlif_release_ratio', type=float, default=0.5, help='for SRLIF only: fraction of output paths gated by the learnable release threshold; remaining paths transmit ordinary LIF spikes')
     parser.add_argument('-synaptic_release_enable', action='store_true', help='enable per-synapse learnable release thresholds inside supported Conv2d layers')
     parser.add_argument('-synaptic_release_chunk_size', type=int, default=16, help='for synaptic release Conv2d: output channels processed per chunk to reduce peak activation memory')
     parser.add_argument('-synaptic_release_groups', type=int, default=0, help='for synaptic release Conv2d: number of random threshold-sharing groups; 0 keeps one threshold per synapse')
+    parser.add_argument('-synaptic_release_fixed_threshold_ratio', type=float, default=0.5, help='for synaptic release layers: fraction of synapses with release threshold fixed to v_threshold')
     parser.add_argument('-synaptic_release_group_seed', type=int, default=2022, help='for synaptic release Conv2d: random seed for deterministic synapse-to-threshold-group assignment')
     parser.add_argument('-asn_enable', action='store_true', help='enable ASN local lateral inhibition on 4D neuron maps')
     parser.add_argument('-asn_p', type=float, default=0.5, help='for ASN only: Bernoulli probability for ASN-like positions')
@@ -250,12 +251,16 @@ def main():
         raise ValueError('-v_threshold must be positive.')
     if args.fc_hidden_dim <= 0:
         raise ValueError('-fc_hidden_dim must be positive.')
+    if args.release_threshold_init < args.v_threshold:
+        raise ValueError('-release_threshold_init must be at least -v_threshold.')
     if not 0.0 <= args.srlif_release_ratio <= 1.0:
         raise ValueError('-srlif_release_ratio must be in [0, 1].')
     if args.synaptic_release_chunk_size <= 0:
         raise ValueError('-synaptic_release_chunk_size must be positive.')
     if args.synaptic_release_groups < 0:
         raise ValueError('-synaptic_release_groups must be non-negative.')
+    if not 0.0 <= args.synaptic_release_fixed_threshold_ratio <= 1.0:
+        raise ValueError('-synaptic_release_fixed_threshold_ratio must be in [0, 1].')
     if args.synaptic_release_enable and args.model not in ['spiking_vgg11_bn', 'spiking_vgg13_bn', 'spiking_vgg16_bn', 'spiking_vgg19_bn', 'dvscifar10_fc2']:
         raise NotImplementedError('-synaptic_release_enable is currently implemented for spiking_vgg*_bn and dvscifar10_fc2 models only.')
     if args.neuron_model == 'LSLIF2' and (args.history_learn_power or abs(float(args.history_power) - 1.0) > 1e-12):
@@ -555,6 +560,7 @@ def main():
         synaptic_release_enable=args.synaptic_release_enable,
         synaptic_release_chunk_size=args.synaptic_release_chunk_size,
         synaptic_release_groups=args.synaptic_release_groups,
+        synaptic_release_fixed_threshold_ratio=args.synaptic_release_fixed_threshold_ratio,
         synaptic_release_group_seed=args.synaptic_release_group_seed,
         hidden_dim=args.fc_hidden_dim,
         surrogate_function=surrogate_function,
@@ -770,6 +776,7 @@ def main():
     if args.synaptic_release_enable:
         run_name_parts.append(f'突触释放chunk{args.synaptic_release_chunk_size}')
         run_name_parts.append(f'突触阈值组数{args.synaptic_release_groups}')
+        run_name_parts.append(f'固定突触阈值比例{args.synaptic_release_fixed_threshold_ratio}')
     if args.model == 'dvscifar10_fc2':
         run_name_parts.append(f'FC隐藏神经元{args.fc_hidden_dim}')
     if args.neuron_model == 'SRLIF':
