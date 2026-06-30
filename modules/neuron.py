@@ -613,12 +613,21 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
 
 
 class LSTernarySpikeNeuron(LSLIFNeuron):
-    """Ternary spike neuron with the LSLIF auxiliary history (LS) branch."""
+    """Ternary spike neuron with the LSLIF auxiliary history (LS) branch.
 
-    def __init__(self, *args, fire_ratio: float = 1.0, temp: float = 3.0, **kwargs):
+    The ternary membrane dynamics are aligned with
+    ``三值神经元/models/spike_layer.py`` by using the same fixed decay as
+    ``TernarySpikeNeuron`` before applying the LS auxiliary history branch.
+    """
+
+    def __init__(
+        self, *args, fire_ratio: float = 1.0, temp: float = 3.0,
+        ternary_decay: float = 0.25, **kwargs
+    ):
         super().__init__(*args, **kwargs)
         self.fire_ratio = float(fire_ratio)
         self.temp = float(temp)
+        self.ternary_decay = float(ternary_decay)
 
     def _ternary_fire(self, mem: torch.Tensor) -> torch.Tensor:
         threshold = torch.as_tensor(self.v_threshold, device=mem.device, dtype=mem.dtype)
@@ -629,15 +638,9 @@ class LSTernarySpikeNeuron(LSLIFNeuron):
         self._ensure_state(x)
         x_f = x.to(torch.float32)
 
-        tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
-        if self.decay_input:
-            m_t = self.v + (x_f - self.v) / (tau_eff + self.tau_eps)
-            n_t = self.n + (x_f - self.n) / (tau_eff + self.tau_eps)
-        else:
-            decay = 1.0 - 1.0 / (tau_eff + self.tau_eps)
-            decay = torch.clamp(decay, 0.0, 1.0)
-            m_t = self.v * decay + x_f
-            n_t = self.n * decay + x_f
+        decay = torch.as_tensor(self.ternary_decay, device=self.v.device, dtype=self.v.dtype)
+        m_t = self.v * decay + x_f
+        n_t = self.n * decay + x_f
 
         self.step_count += 1
         step_t = torch.as_tensor(float(self.step_count), device=m_t.device, dtype=m_t.dtype)
