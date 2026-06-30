@@ -342,6 +342,84 @@ class ReLU(nn.Module):
         return torch.relu(x)
 
 
+
+
+def ternary_spike_activation(x: torch.Tensor, binary: bool = False, temp: float = 1.0) -> torch.Tensor:
+    """STE spike activation that emits {-1, 0, +1} in ternary mode."""
+    if binary:
+        out_s = torch.gt(x, 0.5)
+        out_bp = torch.clamp(x, 0, 1)
+        return (out_s.float() - out_bp).detach() + out_bp
+    out_s = torch.sign(x)
+    out_s = torch.where(torch.abs(x) < 0.5, torch.zeros((), device=x.device, dtype=x.dtype), out_s)
+    out_bp = torch.clamp(x, -1, 1)
+    return (out_s.float() - out_bp).detach() + out_bp
+
+
+class TernarySpikeNeuron(SuccessModulationMixin, nn.Module):
+    """LIF neuron that emits ternary spikes {-1, 0, +1}.
+
+    The membrane follows ``mem = mem * decay + x`` and fires on the normalized
+    membrane ``mem / v_threshold`` with a dead zone of (-0.5, 0.5). Firing sites
+    are softly reset to zero for both positive and negative ternary spikes.
+    """
+
+    def __init__(
+        self,
+        tau: float = 2.0,
+        decay_input: bool = False,
+        v_threshold: float = 1.0,
+        v_reset: Optional[float] = None,
+        detach_reset: bool = False,
+        tau_eps: float = 1e-6,
+        fire_ratio: float = 1.0,
+        temp: float = 3.0,
+        **kwargs,
+    ):
+        super().__init__()
+        self.tau = float(tau)
+        self.decay_input = bool(decay_input)
+        self.v_threshold = float(v_threshold)
+        self.v_reset = v_reset
+        self.detach_reset = bool(detach_reset)
+        self.tau_eps = float(tau_eps)
+        self.fire_ratio = float(fire_ratio)
+        self.temp = float(temp)
+        self._init_success_modulation(**_success_modulation_kwargs(kwargs))
+        self.v = None
+
+    def reset(self):
+        self.v = None
+
+    def _ensure_state(self, x: torch.Tensor):
+        if self.v is None or self.v.shape != x.shape or self.v.device != x.device:
+            self.v = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+
+    def _ternary_fire(self, mem: torch.Tensor) -> torch.Tensor:
+        threshold = torch.as_tensor(self.v_threshold, device=mem.device, dtype=mem.dtype)
+        modulation = self._success_modulation(mem)
+        return ternary_spike_activation((mem + modulation) / threshold, temp=self.temp) * self.fire_ratio
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+        tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
+        if self.decay_input:
+            mem = self.v + (x_f - self.v) / (tau_eff + self.tau_eps)
+        else:
+            decay = torch.clamp(1.0 - 1.0 / (tau_eff + self.tau_eps), 0.0, 1.0)
+            mem = self.v * decay + x_f
+        spike = self._ternary_fire(mem)
+        rs = spike.detach() if self.detach_reset else spike
+        if self.v_reset is None:
+            self.v = mem * (1.0 - torch.abs(rs))
+        else:
+            v_reset_t = torch.as_tensor(self.v_reset, device=mem.device, dtype=mem.dtype)
+            self.v = torch.where(torch.abs(rs) > 0, v_reset_t, mem)
+        self._cache_success_spike(spike)
+        return spike.to(dtype=x.dtype)
+
+
 class LSLIFNeuron(ASNFireMixin, nn.Module):
     """
     LIF variant with an auxiliary history branch.
@@ -530,6 +608,57 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
 
         self.n = n_t
         self.has_fired = torch.logical_or(self.has_fired, rs.bool())
+        self._cache_success_spike(spike)
+        return spike.to(dtype=x.dtype)
+
+
+class LSTernarySpikeNeuron(LSLIFNeuron):
+    """Ternary spike neuron with the LSLIF auxiliary history (LS) branch."""
+
+    def __init__(self, *args, fire_ratio: float = 1.0, temp: float = 3.0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fire_ratio = float(fire_ratio)
+        self.temp = float(temp)
+
+    def _ternary_fire(self, mem: torch.Tensor) -> torch.Tensor:
+        threshold = torch.as_tensor(self.v_threshold, device=mem.device, dtype=mem.dtype)
+        modulation = self._success_modulation(mem)
+        return ternary_spike_activation((mem + modulation) / threshold, temp=self.temp) * self.fire_ratio
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+
+        tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
+        if self.decay_input:
+            m_t = self.v + (x_f - self.v) / (tau_eff + self.tau_eps)
+            n_t = self.n + (x_f - self.n) / (tau_eff + self.tau_eps)
+        else:
+            decay = 1.0 - 1.0 / (tau_eff + self.tau_eps)
+            decay = torch.clamp(decay, 0.0, 1.0)
+            m_t = self.v * decay + x_f
+            n_t = self.n * decay + x_f
+
+        self.step_count += 1
+        step_t = torch.as_tensor(float(self.step_count), device=m_t.device, dtype=m_t.dtype)
+        history_power = self._get_history_power(dtype=m_t.dtype, device=m_t.device)
+        norm = torch.pow(step_t + self.history_eps, history_power)
+        history_weight = self._get_history_weight(dtype=m_t.dtype, device=m_t.device, step_count=self.step_count)
+        history_term = history_weight * (n_t / norm)
+        if self.history_mode == 'post_spike':
+            history_term = history_term * self.has_fired.to(dtype=history_term.dtype)
+        total_mem = m_t + history_term
+
+        spike = self._ternary_fire(total_mem)
+        rs = spike.detach() if self.detach_reset else spike
+        if self.v_reset is None:
+            self.v = m_t * (1.0 - torch.abs(rs))
+        else:
+            v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
+            self.v = torch.where(torch.abs(rs) > 0, v_reset_t, m_t)
+
+        self.n = n_t
+        self.has_fired = torch.logical_or(self.has_fired, torch.abs(rs) > 0)
         self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
 

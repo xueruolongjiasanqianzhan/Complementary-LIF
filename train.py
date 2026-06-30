@@ -126,7 +126,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), SRLIF (Synaptic Release LIF), SCRLIF (Spike-Cause Reset LIF), SCRLIFV2, HALIF, ZELIF, IDISILIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, QKVLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), SRLIF (Synaptic Release LIF), SCRLIF (Spike-Cause Reset LIF), SCRLIFV2, HALIF, ZELIF, IDISILIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, Ternary, LSTernary, QKVLIF, CLIF, PLIF, relu')
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
     parser.add_argument('-idisi_max_inverse_decay', type=float, default=8.0, help='for IDISILIF only: clamp for inverse-decay ISI credit')
     parser.add_argument('-idisi_eps', type=float, default=1e-6, help='for IDISILIF only: numerical epsilon for threshold and decay')
@@ -519,6 +519,10 @@ def main():
         neuron_model = neuron.LIFDGN2Neuron
     elif args.neuron_model == 'LIFDGN3':
         neuron_model = neuron.LIFDGN3Neuron
+    elif args.neuron_model == 'Ternary':
+        neuron_model = neuron.TernarySpikeNeuron
+    elif args.neuron_model == 'LSTernary':
+        neuron_model = neuron.LSTernarySpikeNeuron
     elif args.neuron_model == 'LSLIF':
         neuron_model = neuron.LSLIFNeuron
     elif args.neuron_model == 'LSLIF2':
@@ -852,7 +856,7 @@ def main():
             f'halif_vreset{args.halif_v_reset}',
             f'halif_seed{args.halif_auto_seed}',
         ])
-    if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSLIF3', 'LSLIF4', 'LSCLIF', 'LSPLIF', 'TLIF']:
+    if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSLIF3', 'LSLIF4', 'LSCLIF', 'LSPLIF', 'TLIF', 'LSTernary']:
         history_weight_can_learn = '是' if args.history_learn_weight else '否'
         history_weight_per_step = '是' if args.history_weight_per_step else '否'
         history_power_can_learn = '是' if args.history_learn_power else '否'
