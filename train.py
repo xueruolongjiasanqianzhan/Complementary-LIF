@@ -192,6 +192,7 @@ def main():
     parser.add_argument('-qkv_learn_w', type=bool, default=True, help='for QKVLIF only: make q/k/v scalar projection weights learnable')
     parser.add_argument('-qkv_max_history', type=int, default=0, help='for QKVLIF only: max cached historical steps; 0 keeps all causal history')
     parser.add_argument('-qkv_detach_history', type=bool, default=False, help='for QKVLIF only: detach cached historical membrane/input tensors')
+    parser.add_argument('-ternary_decay', type=float, default=0.25, help='for Ternary and LSTernary only: fixed membrane decay used by borrowed 三值神经元 LIFAct')
     parser.add_argument('-tlif_lambda', type=float, default=0.5, help='for TLIF only: per-step threshold growth ratio based on the current-prev threshold gap')
     parser.add_argument('-tlif_theta', type=float, default=None, help='for TLIF only: base threshold interval; defaults to v_threshold')
     parser.add_argument('-tlif_alpha', type=float, default=0.5, help='deprecated for TLIF: ignored by the LSLIF-aligned implementation')
@@ -671,6 +672,8 @@ def main():
         neuron_kwargs['v_reset'] = None if args.rcm_reset == 'soft' else args.rcm_v_reset
     if args.neuron_model == 'HALIF':
         neuron_kwargs['v_reset'] = args.halif_v_reset
+    if args.neuron_model in ['Ternary', 'LSTernary']:
+        neuron_kwargs['ternary_decay'] = args.ternary_decay
 
     if args.model in ['spiking_resnet18', 'spiking_resnet34', 'spiking_resnet50', 'spiking_resnet101', 'spiking_resnet152']:
         net = spiking_resnet.__dict__[args.model](neuron=neuron_model, num_classes=num_classes,
@@ -856,6 +859,8 @@ def main():
             f'halif_vreset{args.halif_v_reset}',
             f'halif_seed{args.halif_auto_seed}',
         ])
+    if args.neuron_model in ['Ternary', 'LSTernary']:
+        run_name_parts.append(f'三值衰减{args.ternary_decay}')
     if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSLIF3', 'LSLIF4', 'LSCLIF', 'LSPLIF', 'TLIF', 'LSTernary']:
         history_weight_can_learn = '是' if args.history_learn_weight else '否'
         history_weight_per_step = '是' if args.history_weight_per_step else '否'
