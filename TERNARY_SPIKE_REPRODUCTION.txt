@@ -1,0 +1,518 @@
+Ternary Spike 三值神经元核心思想与 1:1 复现档案
+====================================================
+
+目标
+----
+本文档把本仓库中三值神经元（Ternary Spike Neuron）的核心思想、核心公式、核心代码路径、逐行复现要点，以及迁移到其他网络框架时必须保持不变的接口和张量约定整理为一个可执行规格。只要严格按本文档实现，即可在 PyTorch 或其他深度学习框架中 1:1 复现本仓库的三值脉冲行为，并把它嵌入 ResNet、VGG、CNN 或自定义网络。
+
+一、核心思想
+------------
+1. 传统 SNN 常用二值脉冲 {0, 1} 传递信息。二值脉冲具备事件驱动、乘法可替换为加法等能效优势，但表达容量有限，容易造成信息损失。
+2. 本仓库的 Ternary Spike 把神经元输出扩展为三值集合 {-1, 0, +1}：
+   - +1 表示正向事件；
+   - -1 表示负向事件；
+   - 0 表示无事件。
+3. 三值脉冲仍然是离散事件，因此在部署时可以保留事件驱动和无乘法优势；相比二值脉冲，它能额外表达负向变化，提升信息容量。
+4. 训练时使用 Straight-Through Estimator（STE）：前向传播输出硬三值 {-1, 0, +1}，反向传播使用裁剪后的连续代理梯度，避免不可导的 sign / threshold 操作阻断梯度。
+5. 在网络层面，普通 ANN 被包装为带时间维度 T 的 SNN：输入复制到 T 个时间步，Conv/Linear/Pool/BN/ReLU 等模块被替换为支持时间维的 Spike 版本，最终对时间维输出求平均得到分类 logits。
+
+二、核心张量约定
+----------------
+必须保持以下约定，否则无法与本仓库行为 1:1 对齐：
+
+1. 静态图像输入：
+   - 原始 ANN 输入形状为 [B, C, H, W]。
+   - SpikeModel.forward 会复制为 [T, B, C, H, W]。
+   - 复制方式等价于 input.repeat(step, 1, 1, 1, 1)。
+
+2. 事件/序列输入：
+   - 如果输入已带时间维，约定外部输入通常是 [B, T, C, H, W]。
+   - SpikeModel.forward 会转置为 [T, B, C, H, W]。
+
+3. 所有脉冲层内部统一使用：
+   - T: 时间步；
+   - B: batch size；
+   - C: channel；
+   - H/W: 空间尺寸；
+   - 标准形状为 [T, B, C, H, W]。
+
+4. 输出聚合：
+   - 如果模型输出为 [T, B, Classes]，最终沿时间维求平均，得到 [B, Classes]。
+   - 即 out = out.mean([0])。
+
+三、三值激活函数 spike_activation
+--------------------------------
+这是三值神经元最核心的离散化函数。必须按以下逻辑复现。
+
+输入：
+- x: 膜电位除以阈值后的归一化值，通常为 mem / V_th。
+- binary: 是否退化为二值脉冲；本项目三值神经元使用 binary=False。
+- temp: 温度参数，当前三值分支里保留接口但默认代理梯度未使用 tanh 温度版本。
+
+三值前向硬输出：
+1. 先取 sign(x)：
+   - x > 0 输出 +1；
+   - x < 0 输出 -1；
+   - x = 0 输出 0。
+2. 再施加死区阈值：
+   - abs(x) < 0.5 的位置强制输出 0。
+3. 因此最终三值规则为：
+   - x >= +0.5 -> +1；
+   - x <= -0.5 -> -1；
+   - -0.5 < x < +0.5 -> 0。
+
+三值反向代理：
+1. out_bp = clamp(x, -1, 1)。
+2. 返回值使用 STE：
+   return (out_s.float() - out_bp).detach() + out_bp
+3. 该表达式含义：
+   - 前向数值等于 out_s；
+   - 反向梯度来自 out_bp，即 x 在 [-1, 1] 内梯度近似为 1，区间外梯度为 0。
+
+PyTorch 1:1 复现代码：
+
+```python
+import torch
+
+def spike_activation(x, binary=False, temp=1.0):
+    if binary:
+        out_s = torch.gt(x, 0.5)
+        out_bp = torch.clamp(x, 0, 1)
+        return (out_s.float() - out_bp).detach() + out_bp
+    else:
+        out_s = torch.sign(x)
+        out_s[torch.abs(x) < 0.5] = torch.tensor(0., device=x.device, dtype=x.dtype)
+        out_bp = torch.clamp(x, -1, 1)
+        return (out_s.float() - out_bp).detach() + out_bp
+```
+
+注意：原仓库写法中 torch.tensor(0.) 未显式指定 device/dtype；迁移到 GPU 或其他框架时建议显式使用 device=x.device, dtype=x.dtype，以避免跨设备赋值问题。若追求源码字节级一致，可保留原写法；若追求工程可移植性，使用上面的安全写法。
+
+四、膜电位更新 mem_update
+------------------------
+这是 LIF 三值神经元的状态更新核心。每个时间步执行一次。
+
+输入：
+- x_in: 当前时间步输入电流/特征，形状 [B, C, H, W] 或对应层输出形状。
+- mem: 上一时间步膜电位，同形状。
+- V_th: 放电阈值，本仓库默认 1.0。
+- decay: 膜电位衰减系数，本仓库 LIFAct 中固定为 0.25。
+- fire_ratio: 脉冲缩放系数，本仓库默认 1。
+- grad_scale: 阈值梯度缩放接口，当前实际未启用。
+- temp: 温度参数接口。
+
+更新顺序必须保持一致：
+1. 膜电位泄漏累积：
+   mem = mem * decay + x_in
+2. 归一化后产生三值脉冲：
+   spike = spike_activation(mem / V_th, temp=temp)
+3. 软重置膜电位：
+   mem = mem * (1 - abs(spike))
+   - spike 为 +1 或 -1 的位置，膜电位清零；
+   - spike 为 0 的位置，膜电位保留。
+4. 输出脉冲缩放：
+   spike = spike * fire_ratio
+5. 返回新的膜电位和当前脉冲：
+   return mem, spike
+
+PyTorch 1:1 复现代码：
+
+```python
+def mem_update(x_in, mem, V_th, decay, fire_ratio, grad_scale=1., temp=1.0):
+    mem = mem * decay + x_in
+    spike = spike_activation(mem / V_th, temp=temp)
+    mem = mem * (1 - torch.abs(spike))
+    spike = spike * fire_ratio
+    return mem, spike
+```
+
+五、LIFAct：把 ReLU 替换为三值 LIF 神经元
+----------------------------------------
+LIFAct 是本项目中普通 ReLU/ReLU6 的脉冲替代模块。
+
+默认超参数：
+- step: 时间步 T，由训练参数 --step 指定，README 示例为 4。
+- V_th = 1.0。
+- temp = 3.0。
+- grad_scale = 0.1；如果被设为 None，则运行时会设为 1 / sqrt(x[0].numel() * step)。
+- fire_ratio = 1。
+- decay = 0.25，在 forward 调用 mem_update 时固定传入。
+
+非脉冲模式：
+- 如果 _spiking 不是 True，LIFAct 等价于 F.relu(x)。
+
+脉冲模式：
+1. 输入 x 必须是 [T, B, C, H, W]。
+2. 初始化膜电位 u = zeros_like(x[0])。
+3. 对 i in range(step)：
+   - u, out_i = mem_update(x[i], u, V_th=1.0, decay=0.25, fire_ratio=1, grad_scale=0.1, temp=3.0)
+   - 保存 out_i。
+4. stack 所有时间步输出，得到 [T, B, C, H, W]。
+
+PyTorch 1:1 复现代码：
+
+```python
+import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class SpikeModule(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self._spiking = False
+
+    def set_spike_state(self, use_spike=True):
+        self._spiking = use_spike
+
+    def forward(self, x):
+        if self._spiking is not True and len(x.shape) == 5:
+            x = x.mean([0])
+        return x
+
+class LIFAct(SpikeModule):
+    def __init__(self, step):
+        super().__init__()
+        self.step = step
+        self.V_th = 1.0
+        self.temp = 3.0
+        self.grad_scale = 0.1
+        self.fire_ratio = 1
+
+    def forward(self, x):
+        if self._spiking is not True:
+            return F.relu(x)
+        if self.grad_scale is None:
+            self.grad_scale = 1 / math.sqrt(x[0].numel() * self.step)
+        u = torch.zeros_like(x[0])
+        out = []
+        for i in range(self.step):
+            u, out_i = mem_update(
+                x_in=x[i],
+                mem=u,
+                V_th=self.V_th,
+                fire_ratio=self.fire_ratio,
+                grad_scale=self.grad_scale,
+                decay=0.25,
+                temp=self.temp,
+            )
+            out.append(out_i)
+        return torch.stack(out)
+```
+
+六、把普通层改造成时间维 Spike 层
+---------------------------------
+本项目不是重写所有网络，而是递归替换 ANN 模块，使原网络可以在时间维上逐步运行。
+
+1. SpikeConv / SpikePool 的共同思想
+   - 非脉冲模式：直接调用原始层。
+   - 脉冲模式：输入是 [T, B, ...]，对每个时间步分别调用原始层，再 stack 回 [T, B, ...]。
+
+2. Conv2d / Linear / BatchNorm2d / Pool 的包装
+   - Conv2d 在 SpikeModel 中被替换为 SpikePool(child_module, step)。虽然类名叫 SpikePool，但其本质是包装任意可以吃 [B, C, H, W] 的模块，并通过 reshape 或逐时间步调用支持 T 维。
+   - Linear 被替换为 SpikeConv(child_module, step)，即逐时间步调用 Linear。
+   - AvgPool2d / AdaptiveAvgPool2d 被替换为 SpikePool。
+   - BatchNorm2d 当前主路径被替换为 SpikeConv，即逐时间步调用原始 BN。
+
+3. SpikePool 的高效实现
+   - 输入 [T, B, C, H, W]。
+   - reshape 为 [T*B, C, H, W]。
+   - 调用原始 pool/conv/bn 等模块。
+   - reshape 回 [T, B, C_out, H_out, W_out]。
+
+PyTorch 1:1 复现代码：
+
+```python
+class SpikeConv(SpikeModule):
+    def __init__(self, conv, step=2):
+        super().__init__()
+        self.conv = conv
+        self.step = step
+
+    def forward(self, x):
+        if self._spiking is not True:
+            return self.conv(x)
+        out = []
+        for i in range(self.step):
+            out.append(self.conv(x[i]))
+        return torch.stack(out)
+
+class SpikePool(SpikeModule):
+    def __init__(self, pool, step=2):
+        super().__init__()
+        self.pool = pool
+        self.step = step
+
+    def forward(self, x):
+        if self._spiking is not True:
+            return self.pool(x)
+        T, B, C, H, W = x.shape
+        out = x.reshape(-1, C, H, W)
+        out = self.pool(out)
+        B_o, C_o, H_o, W_o = out.shape
+        return out.view(T, B, C_o, H_o, W_o).contiguous()
+```
+
+七、ResNet BasicBlock 的三值脉冲改造
+------------------------------------
+对 ResNet BasicBlock，本仓库使用 SpikeBasicBlock 专门处理残差连接。
+
+结构映射：
+1. basic_block.conv1 -> SpikePool(conv1)
+2. basic_block.bn1 -> myBatchNorm3d(bn1)
+3. relu1 -> LIFAct(step)
+4. basic_block.conv2 -> SpikePool(conv2)
+5. basic_block.bn2 -> myBatchNorm3d(bn2)
+6. downsample 若存在：其中 conv/pool/bn 也包装为 SpikePool 或 myBatchNorm3d。
+7. 残差相加后再通过 output_act = LIFAct(step)。
+
+前向逻辑：
+1. 输入 s 是一个二元结构：temp, x = s。实际使用 x。
+2. x 先经过 SpikeModule.forward 做形状校正。
+3. residual = x。
+4. out = conv1 -> bn1 -> relu1 -> conv2 -> bn2。
+5. 如果 downsample 存在，residual = downsample(x)。
+6. out += residual。
+7. out1 = output_act(out)。
+8. 返回 out, out1。
+
+迁移注意：
+- 若目标框架的 ResNet block forward 只接收 x 而不是 (temp, x)，需要保持与主干网络调用方式一致。核心是不破坏残差相加前后的时间维 [T, B, C, H, W]。
+- 残差相加发生在脉冲输出 output_act 之前。
+
+八、SpikeModel：递归替换 ANN 并控制脉冲模式
+------------------------------------------
+SpikeModel 是把任意 nn.Module 转成 SNN 的入口。
+
+核心行为：
+1. __init__(model, step)：保存原模型并递归替换子模块。
+2. spike_module_refactor：
+   - 如果子模块类型在 specials 中，例如 BasicBlock，则替换为 SpikeBasicBlock。
+   - Sequential 递归处理。
+   - Conv2d -> SpikePool。
+   - Linear -> SpikeConv。
+   - AvgPool2d / AdaptiveAvgPool2d -> SpikePool。
+   - ReLU / ReLU6 -> LIFAct。
+   - BatchNorm2d -> SpikeConv。
+   - 其他模块继续递归。
+3. forward：
+   - [B, C, H, W] 输入复制为 [T, B, C, H, W]。
+   - 已带时间维输入转为 [T, B, C, H, W]。
+   - 调用内部 model。
+   - 若输出为 [T, B, Classes]，沿 T 求均值。
+4. set_spike_state(True)：递归打开所有 SpikeModule 的脉冲模式。
+5. set_spike_state(False)：关闭脉冲模式，使 LIFAct 退化为 ReLU，Spike 包装层退化为原层。
+
+最小使用示例：
+
+```python
+from models import ResNet34
+from models.spike_model import SpikeModel
+
+model = ResNet34(num_classes=1000)
+model = SpikeModel(model, step=4)
+model.set_spike_state(True)
+logits = model(images)  # images: [B, 3, 224, 224], logits: [B, 1000]
+```
+
+九、训练入口与默认复现命令
+--------------------------
+本仓库 README 给出的 ImageNet 训练入口为：
+
+```bash
+python -m torch.distributed.launch --nproc_per_node 8 --nnode 1 --master_port=25641 Train.py --spike --step 4
+```
+
+Train.py 的关键设置：
+1. 默认构建 ResNet34(num_classes=1000)。
+2. 若传入 --spike，则执行：
+   - model = SpikeModel(model, args.step)
+   - model.set_spike_state(True)
+3. 默认 step 为 4。
+4. 损失函数为 CrossEntropyLoss。
+5. 优化器主路径为 SGD(lr=1e-1, momentum=0.9, weight_decay=1e-4)。
+6. 学习率调度为 CosineAnnealingLR。
+7. 使用 ImageNet 标准增强和归一化：
+   - train: RandomResizedCrop(224), RandomHorizontalFlip, ToTensor, Normalize(ImageNet mean/std)
+   - val: Resize(256), CenterCrop(224), ToTensor, Normalize(ImageNet mean/std)
+
+十、迁移到其他网络框架的逐项检查清单
+------------------------------------
+要把三值神经元迁移到 TensorFlow、JAX、MindSpore、自研推理框架或其他 PyTorch 网络，请逐项对齐：
+
+1. 离散三值规则必须一致：
+   - normalized_mem >= +0.5 -> +1
+   - normalized_mem <= -0.5 -> -1
+   - otherwise -> 0
+
+2. STE 必须一致：
+   - 前向使用硬三值。
+   - 反向使用 clamp(x, -1, 1) 的梯度。
+   - 如果目标框架需要自定义梯度，则实现 custom_gradient：forward 返回 out_s，backward 对 x 的梯度在 [-1, 1] 内透传、区间外置零。
+
+3. LIF 状态更新顺序必须一致：
+   - 先 leak/add：mem = mem * 0.25 + x_in。
+   - 再 spike：spike = ternary(mem / 1.0)。
+   - 再 reset：mem = mem * (1 - abs(spike))。
+   - 再 scale：spike = spike * 1。
+
+4. 时间维必须一致：
+   - 内部统一 [T, B, C, H, W]。
+   - 静态输入复制 T 份。
+   - 输出 logits 沿时间维平均。
+
+5. 替换规则必须一致：
+   - ReLU/ReLU6 -> LIFAct。
+   - Conv2d/Pool/BN/Linear 支持时间维逐步调用或 reshape 调用。
+   - 残差块中先残差相加，再通过 LIFAct 输出。
+
+6. 默认超参数必须一致：
+   - step = 4（训练示例）；
+   - V_th = 1.0；
+   - decay = 0.25；
+   - temp = 3.0；
+   - fire_ratio = 1；
+   - grad_scale = 0.1。
+
+十一、框架无关伪代码
+--------------------
+以下伪代码可直接翻译到任意框架：
+
+```text
+function ternary_spike(x):
+    hard = sign(x)
+    hard[abs(x) < 0.5] = 0
+    proxy = clamp(x, -1, 1)
+    return stop_gradient(hard - proxy) + proxy
+
+function lif_step(x_t, mem):
+    mem = mem * 0.25 + x_t
+    spike = ternary_spike(mem / 1.0)
+    mem = mem * (1 - abs(spike))
+    spike = spike * 1
+    return mem, spike
+
+function lif_activation(x, T):
+    # x shape: [T, B, C, H, W]
+    mem = zeros_like(x[0])
+    outputs = []
+    for t in 0..T-1:
+        mem, spike_t = lif_step(x[t], mem)
+        outputs.append(spike_t)
+    return stack(outputs, axis=0)
+
+function spike_model_forward(input, T):
+    if input shape is [B, C, H, W]:
+        x = repeat(input, repeats=T, axis=0)  # [T, B, C, H, W]
+    else if input shape is [B, T, C, H, W]:
+        x = transpose(input, [1, 0, 2, 3, 4])
+
+    y = ann_with_relu_replaced_by_lif_and_layers_time_wrapped(x)
+
+    if y shape is [T, B, Classes]:
+        y = mean(y, axis=0)
+    return y
+```
+
+十二、最小可独立移植代码
+------------------------
+如果只想把三值神经元接入其他 PyTorch 网络，至少复制以下代码，然后把网络中的 ReLU 替换为 LIFAct，并确保输入带 [T, B, ...] 时间维。
+
+```python
+import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class SpikeModule(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self._spiking = False
+
+    def set_spike_state(self, use_spike=True):
+        self._spiking = use_spike
+
+    def forward(self, x):
+        if self._spiking is not True and len(x.shape) == 5:
+            x = x.mean([0])
+        return x
+
+def spike_activation(x, binary=False, temp=1.0):
+    if binary:
+        out_s = torch.gt(x, 0.5)
+        out_bp = torch.clamp(x, 0, 1)
+        return (out_s.float() - out_bp).detach() + out_bp
+    out_s = torch.sign(x)
+    out_s[torch.abs(x) < 0.5] = torch.tensor(0., device=x.device, dtype=x.dtype)
+    out_bp = torch.clamp(x, -1, 1)
+    return (out_s.float() - out_bp).detach() + out_bp
+
+def mem_update(x_in, mem, V_th, decay, fire_ratio, grad_scale=1., temp=1.0):
+    mem = mem * decay + x_in
+    spike = spike_activation(mem / V_th, temp=temp)
+    mem = mem * (1 - torch.abs(spike))
+    spike = spike * fire_ratio
+    return mem, spike
+
+class LIFAct(SpikeModule):
+    def __init__(self, step):
+        super().__init__()
+        self.step = step
+        self.V_th = 1.0
+        self.temp = 3.0
+        self.grad_scale = 0.1
+        self.fire_ratio = 1
+
+    def forward(self, x):
+        if self._spiking is not True:
+            return F.relu(x)
+        if self.grad_scale is None:
+            self.grad_scale = 1 / math.sqrt(x[0].numel() * self.step)
+        u = torch.zeros_like(x[0])
+        out = []
+        for i in range(self.step):
+            u, out_i = mem_update(
+                x_in=x[i],
+                mem=u,
+                V_th=self.V_th,
+                fire_ratio=self.fire_ratio,
+                grad_scale=self.grad_scale,
+                decay=0.25,
+                temp=self.temp,
+            )
+            out.append(out_i)
+        return torch.stack(out)
+```
+
+十三、源码对应关系
+------------------
+本档案内容对应以下源码位置：
+
+1. 三值激活、STE、膜电位更新、LIFAct、SpikeConv、SpikePool：
+   - models/spike_layer.py
+
+2. ResNet BasicBlock 的脉冲残差块改造：
+   - models/spike_block.py
+
+3. ANN 到 SNN 的递归替换、输入时间维复制、输出时间平均、脉冲模式开关：
+   - models/spike_model.py
+
+4. ImageNet 训练入口、--spike、--step、优化器和训练默认配置：
+   - Train.py
+
+5. 项目论文说明与官方训练命令：
+   - README.md
+
+十四、复现时最容易出错的点
+--------------------------
+1. 把三值阈值写成 abs(x) <= 0.5 会改变 x = +/-0.5 边界行为。源码是 abs(x) < 0.5，因此 x = +0.5 输出 +1，x = -0.5 输出 -1。
+2. 忘记 reset 使用 abs(spike)。如果写成 mem = mem * (1 - spike)，负脉冲位置会变成 mem * 2，行为完全错误。
+3. 忘记输出按时间维平均，会导致 logits 形状不匹配或精度异常。
+4. 把 ReLU 放在残差相加前后的位置改错。BasicBlock 中残差相加后还需要 output_act。
+5. 把输入时间维约定从 [T, B, C, H, W] 改成 [B, T, C, H, W] 但未同步所有层。
+6. 只实现硬三值但未实现 STE，会导致训练梯度不可用。
+7. 迁移时没有处理 BatchNorm 的时间维。最简单的 1:1 策略是逐时间步调用 BN 或 reshape T*B 后调用兼容的 2D 层；ResNet BasicBlock 当前使用 myBatchNorm3d 包装。
+
+十五、一句话总结
+----------------
+本项目的三值神经元就是：用 LIF 膜电位在每个时间步累积输入，以 mem/V_th 的 +/-0.5 为阈值输出 {-1, 0, +1} 三值事件，放电位置用 abs(spike) 清零膜电位，训练时用 clamp(-1, 1) 的 STE 传梯度，并通过 SpikeModel 把普通 ANN 的层扩展到 [T, B, C, H, W] 时间维后运行，最后对时间维 logits 求平均。
