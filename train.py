@@ -133,7 +133,8 @@ def main():
     parser.add_argument('-release_threshold_init', type=float, default=1.0, help='for SRLIF and synaptic release layers: initial release threshold, constrained to [v_threshold, +inf)')
     parser.add_argument('-v_threshold', type=float, default=1.0, help='shared soma firing threshold for LIF-family neurons; lower values usually increase spike/release rate')
     parser.add_argument('-srlif_release_ratio', type=float, default=0.5, help='for SRLIF only: fraction of output paths gated by the learnable release threshold; remaining paths transmit ordinary LIF spikes')
-    parser.add_argument('-synaptic_release_enable', action='store_true', help='enable per-synapse learnable release thresholds inside supported Conv2d layers')
+    parser.add_argument('-synaptic_release_enable', action='store_true', help='enable learnable release thresholds inside supported Conv2d layers')
+    parser.add_argument('-synaptic_release_mode', type=str, default='full', choices=['full', 'input_kernel'], help='for synaptic release Conv2d: full keeps the original per-output-channel synapse thresholds; input_kernel shares thresholds by input channel and kernel offset')
     parser.add_argument('-synaptic_release_chunk_size', type=int, default=16, help='for synaptic release Conv2d: output channels processed per chunk to reduce peak activation memory')
     parser.add_argument('-synaptic_release_groups', type=int, default=0, help='for synaptic release Conv2d: number of random threshold-sharing groups; 0 keeps one threshold per synapse')
     parser.add_argument('-synaptic_release_fixed_threshold_ratio', type=float, default=0.5, help='for synaptic release layers: fraction of synapses with release threshold fixed to v_threshold')
@@ -262,6 +263,8 @@ def main():
         raise ValueError('-synaptic_release_groups must be non-negative.')
     if not 0.0 <= args.synaptic_release_fixed_threshold_ratio <= 1.0:
         raise ValueError('-synaptic_release_fixed_threshold_ratio must be in [0, 1].')
+    if args.synaptic_release_mode == 'input_kernel' and args.synaptic_release_groups > 0:
+        raise ValueError('-synaptic_release_groups is only supported when -synaptic_release_mode full.')
     if args.synaptic_release_enable and args.model not in ['spiking_vgg11_bn', 'spiking_vgg13_bn', 'spiking_vgg16_bn', 'spiking_vgg19_bn', 'dvscifar10_fc2']:
         raise NotImplementedError('-synaptic_release_enable is currently implemented for spiking_vgg*_bn and dvscifar10_fc2 models only.')
     if args.neuron_model == 'LSLIF2' and (args.history_learn_power or abs(float(args.history_power) - 1.0) > 1e-12):
@@ -563,6 +566,7 @@ def main():
         release_threshold_init=args.release_threshold_init,
         srlif_release_ratio=args.srlif_release_ratio,
         synaptic_release_enable=args.synaptic_release_enable,
+        synaptic_release_mode=args.synaptic_release_mode,
         synaptic_release_chunk_size=args.synaptic_release_chunk_size,
         synaptic_release_groups=args.synaptic_release_groups,
         synaptic_release_fixed_threshold_ratio=args.synaptic_release_fixed_threshold_ratio,
@@ -781,6 +785,7 @@ def main():
         f'突触级释放{"是" if args.synaptic_release_enable else "否"}',
     ]
     if args.synaptic_release_enable:
+        run_name_parts.append(f'突触释放模式{args.synaptic_release_mode}')
         run_name_parts.append(f'突触释放chunk{args.synaptic_release_chunk_size}')
         run_name_parts.append(f'突触阈值组数{args.synaptic_release_groups}')
         run_name_parts.append(f'固定突触阈值比例{args.synaptic_release_fixed_threshold_ratio}')

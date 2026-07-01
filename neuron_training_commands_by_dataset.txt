@@ -24,8 +24,10 @@
 #      * spiking_vgg*_bn：将 VGG 卷积替换为 SynapticReleaseConv2d。
 #      * dvscifar10_fc2：两层隐藏全连接 SNN，默认每层隐藏神经元 1024 个，可用 -fc_hidden_dim 调整；
 #        开启 -synaptic_release_enable 后在隐藏层之间使用 SynapticReleaseLinear，适合快速验证机制。
-#    -release_threshold_init：释放阈值初始值，范围为 [v_threshold, +inf)；-synaptic_release_groups N：将突触随机分成 N 组，组内共享一个可学习阈值。
-#    -synaptic_release_fixed_threshold_ratio 0.5：随机固定一半突触阈值为 v_threshold，其余阈值参与学习，降低参数量并稳定训练。
+#    -release_threshold_init：释放阈值初始值，范围为 [v_threshold, +inf)。
+#    -synaptic_release_mode full：默认保留原始 Conv 释放阈值设计，可配合 -synaptic_release_groups N 将突触随机分成 N 组，组内共享一个可学习阈值。
+#    -synaptic_release_mode input_kernel：VGG Conv 紧凑模式，按输入通道 + 卷积核相对位置共享阈值；不要同时设置 -synaptic_release_groups。
+#    -synaptic_release_fixed_threshold_ratio 0.5：full 模式下随机固定一半突触阈值为 v_threshold，其余阈值参与学习，降低参数量并稳定训练。
 #    开启后突触释放由 presynaptic reset 前膜电位和突触阈值决定；阈值不低于胞体阈值，因此释放要求膜电位达到会触发胞体发放的水平。
 #    -synaptic_release_chunk_size：Conv 版本按输出通道分块计算释放门；FC 版本通常不需要设置该参数。
 
@@ -376,12 +378,12 @@ python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -m
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model dvscifar10_fc2 -lr 0.05 -mse_n_reg -neuron_model LIF \
   -release_threshold_init 1.0 -v_threshold 0.8 -fc_hidden_dim 1024 -synaptic_release_enable -synaptic_release_groups 16 -synaptic_release_fixed_threshold_ratio 0.5
 
-# LIF + 突触级释放网络模式（用于和普通 LIF 对比；示例使用随机分组共享可学习释放阈值）
+# LIF + 突触级释放网络模式（用于和普通 LIF 对比；VGG Conv 使用 input_kernel：按输入通道 + 卷积核相对位置共享阈值）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIF \
-  -release_threshold_init 1.0 -v_threshold 0.8 -synaptic_release_enable -synaptic_release_groups 64 -synaptic_release_fixed_threshold_ratio 0.5 -synaptic_release_chunk_size 16
-# SRLIF（Synaptic Release LIF；普通 spike 后增加确定性可学习释放阈值，reset 仍由原始 spike 触发）
+  -release_threshold_init 1.0 -v_threshold 0.8 -synaptic_release_enable -synaptic_release_mode input_kernel -synaptic_release_chunk_size 16
+# SRLIF（Synaptic Release LIF；普通 spike 后增加确定性可学习释放阈值，reset 仍由原始 spike 触发；VGG Conv 使用 input_kernel 共享阈值）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model SRLIF \
-  -release_threshold_init 1.0 -v_threshold 0.8 -srlif_release_ratio 0.5 -synaptic_release_enable -synaptic_release_groups 64 -synaptic_release_fixed_threshold_ratio 0.5 -synaptic_release_chunk_size 16
+  -release_threshold_init 1.0 -v_threshold 0.8 -srlif_release_ratio 0.5 -synaptic_release_enable -synaptic_release_mode input_kernel -synaptic_release_chunk_size 16
 # SCRLIF（特有参数：spike-cause reset；q/r 仅在放电位置计算）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model SCRLIF \
   -scr_r0 0.8 -scr_alpha_in 0.2 -scr_alpha_exc 0.1 -scr_alpha_isi 0.1 -scr_r_min 0.7 -scr_r_max 1.2 -scr_tau_isi 10 -scr_init_isi 10
