@@ -134,7 +134,7 @@ def main():
     parser.add_argument('-v_threshold', type=float, default=1.0, help='shared soma firing threshold for LIF-family neurons; lower values usually increase spike/release rate')
     parser.add_argument('-srlif_release_ratio', type=float, default=0.5, help='for SRLIF only: fraction of output paths gated by the learnable release threshold; remaining paths transmit ordinary LIF spikes')
     parser.add_argument('-synaptic_release_enable', action='store_true', help='enable learnable release thresholds inside supported Conv2d layers')
-    parser.add_argument('-synaptic_release_mode', type=str, default='full', choices=['full', 'input_kernel'], help='for synaptic release Conv2d: full keeps the original per-output-channel synapse thresholds; input_kernel shares thresholds by input channel and kernel offset')
+    parser.add_argument('-synaptic_release_mode', type=str, default='full', choices=['full', 'input_kernel', 'spatial_input_kernel'], help='for synaptic release Conv2d: full keeps the original per-output-channel synapse thresholds; input_kernel shares thresholds by input channel and kernel offset; spatial_input_kernel also keeps separate thresholds per output location')
     parser.add_argument('-synaptic_release_chunk_size', type=int, default=16, help='for synaptic release Conv2d: output channels processed per chunk to reduce peak activation memory')
     parser.add_argument('-synaptic_release_groups', type=int, default=0, help='for synaptic release Conv2d: number of random threshold-sharing groups; 0 keeps one threshold per synapse')
     parser.add_argument('-synaptic_release_fixed_threshold_ratio', type=float, default=0.5, help='for synaptic release layers: fraction of synapses with release threshold fixed to v_threshold')
@@ -263,7 +263,7 @@ def main():
         raise ValueError('-synaptic_release_groups must be non-negative.')
     if not 0.0 <= args.synaptic_release_fixed_threshold_ratio <= 1.0:
         raise ValueError('-synaptic_release_fixed_threshold_ratio must be in [0, 1].')
-    if args.synaptic_release_mode == 'input_kernel' and args.synaptic_release_groups > 0:
+    if args.synaptic_release_mode in ['input_kernel', 'spatial_input_kernel'] and args.synaptic_release_groups > 0:
         raise ValueError('-synaptic_release_groups is only supported when -synaptic_release_mode full.')
     if args.synaptic_release_enable and args.model not in ['spiking_vgg11_bn', 'spiking_vgg13_bn', 'spiking_vgg16_bn', 'spiking_vgg19_bn', 'dvscifar10_fc2']:
         raise NotImplementedError('-synaptic_release_enable is currently implemented for spiking_vgg*_bn and dvscifar10_fc2 models only.')
@@ -378,6 +378,7 @@ def main():
     elif args.dataset == 'DVSCIFAR10':
         c_in = 2
         num_classes = 10
+        in_dim = 48
 
         transform_train = transforms.Compose([
             ToPILImage(),
