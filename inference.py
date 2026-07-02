@@ -121,7 +121,7 @@ def main():
     parser.add_argument('-v_threshold', type=float, default=1.0, help='shared soma firing threshold for LIF-family neurons')
     parser.add_argument('-synaptic_release_enable', action='store_true', help='enable learnable release thresholds inside supported Conv2d layers')
     parser.add_argument('-synaptic_release_mode', type=str, default='full', choices=['full', 'input_kernel', 'spatial_input_kernel'], help='for synaptic release Conv2d: full, input_kernel, or spatial_input_kernel threshold sharing')
-    parser.add_argument('-synaptic_release_chunk_size', type=int, default=16, help='for synaptic release Conv2d: output channels processed per chunk')
+    parser.add_argument('-synaptic_release_chunk_size', type=int, default=16, help='for synaptic release Conv2d full mode: output channels processed per chunk')
     parser.add_argument('-synaptic_release_groups', type=int, default=0, help='for synaptic release Conv2d full mode: number of random threshold-sharing groups')
     parser.add_argument('-synaptic_release_fixed_threshold_ratio', type=float, default=0.5, help='for synaptic release full mode: fraction fixed to v_threshold')
     parser.add_argument('-synaptic_release_group_seed', type=int, default=2022, help='for synaptic release full mode: random seed')

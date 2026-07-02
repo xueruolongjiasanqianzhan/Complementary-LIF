@@ -30,7 +30,7 @@
 #    -synaptic_release_mode spatial_input_kernel：VGG Conv 空间位置模式，按输出位置 + 输入通道 + 卷积核相对位置学习阈值，仍在不同输出通道间共享。
 #    -synaptic_release_fixed_threshold_ratio 0.5：full 模式下随机固定一半突触阈值为 v_threshold，其余阈值参与学习，降低参数量并稳定训练。
 #    开启后突触释放由 presynaptic reset 前膜电位和突触阈值决定；阈值不低于胞体阈值，因此释放要求膜电位达到会触发胞体发放的水平。
-#    -synaptic_release_chunk_size：Conv 版本按输出通道分块计算释放门；FC 版本通常不需要设置该参数。
+#    -synaptic_release_chunk_size：full Conv 版本按输出通道分块计算释放门；input_kernel/spatial_input_kernel 快路径与 FC 版本通常不需要设置该参数。
 
 ############################################################
 # CIFAR-10
@@ -381,10 +381,10 @@ python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -m
 
 # LIF + 突触级释放网络模式（用于和普通 LIF 对比；VGG Conv 使用 spatial_input_kernel：按输出位置 + 输入通道 + 卷积核相对位置学习阈值）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIF \
-  -release_threshold_init 1.0 -v_threshold 0.8 -synaptic_release_enable -synaptic_release_mode spatial_input_kernel -synaptic_release_chunk_size 16
+  -release_threshold_init 1.0 -v_threshold 0.8 -synaptic_release_enable -synaptic_release_mode spatial_input_kernel
 # SRLIF（Synaptic Release LIF；普通 spike 后增加确定性可学习释放阈值，reset 仍由原始 spike 触发；VGG Conv 使用 spatial_input_kernel，空间位置不共享阈值）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model SRLIF \
-  -release_threshold_init 1.0 -v_threshold 0.8 -srlif_release_ratio 0.5 -synaptic_release_enable -synaptic_release_mode spatial_input_kernel -synaptic_release_chunk_size 16
+  -release_threshold_init 1.0 -v_threshold 0.8 -srlif_release_ratio 0.5 -synaptic_release_enable -synaptic_release_mode spatial_input_kernel
 # SCRLIF（特有参数：spike-cause reset；q/r 仅在放电位置计算）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model SCRLIF \
   -scr_r0 0.8 -scr_alpha_in 0.2 -scr_alpha_exc 0.1 -scr_alpha_isi 0.1 -scr_r_min 0.7 -scr_r_max 1.2 -scr_tau_isi 10 -scr_init_isi 10
