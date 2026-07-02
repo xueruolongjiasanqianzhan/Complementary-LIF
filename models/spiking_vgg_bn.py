@@ -103,24 +103,30 @@ class IDISILinear(nn.Linear):
 
 
 class SynapticReleaseConv2d(nn.Conv2d):
-    """Conv2d with a learnable release threshold for every conv synapse.
+    """Conv2d with learnable release thresholds for conv synapses.
 
-    By default, the threshold shape matches the convolution weight shape
+    The default ``full`` mode preserves the original design: the threshold shape
+    matches the convolution weight shape
     ``[out_channels, in_channels, kernel_h, kernel_w]``.  If
     ``synaptic_release_groups`` is positive, synapses are deterministically
     assigned to that many random groups and all synapses in a group share one
-    learnable threshold.  When a presynaptic pre-reset membrane tensor is
-    provided, each unfolded input connection releases by
-    ``surrogate(v_pre[i, k] - release_threshold[o, i, k])`` and the release event
-    itself is used for the weighted sum.  The release threshold is clamped to at
-    least the soma firing threshold, so release requires a membrane level that
-    would also trigger a soma spike.
+    learnable threshold.
+
+    The ``input_kernel`` mode is a separate compact mode for convolutional VGG
+    experiments.  It learns one threshold for each input channel and kernel
+    offset, ``[in_channels, kernel_h, kernel_w]``, and shares it across all
+    output channels.  When a presynaptic pre-reset membrane tensor is provided,
+    each unfolded input connection releases by comparing the presynaptic source
+    with its selected threshold, and the release event itself is used for the
+    weighted sum.  The release threshold is clamped to at least the soma firing
+    threshold, so release requires a membrane level that would also trigger a
+    soma spike.
     """
 
     def __init__(
         self, *args, release_threshold_init=1.0, surrogate_function=None,
         synaptic_release_chunk_size=16, synaptic_release_groups=0,
-        release_threshold_min=1.0,
+        release_threshold_min=1.0, synaptic_release_mode='full',
         synaptic_release_fixed_threshold_ratio=0.5,
         synaptic_release_group_seed=2022, **kwargs
     ):
@@ -134,38 +140,51 @@ class SynapticReleaseConv2d(nn.Conv2d):
             raise ValueError('synaptic_release_groups must be non-negative.')
         if not 0.0 <= synaptic_release_fixed_threshold_ratio <= 1.0:
             raise ValueError('synaptic_release_fixed_threshold_ratio must be in [0, 1].')
+        self.synaptic_release_mode = str(synaptic_release_mode)
+        if self.synaptic_release_mode not in ['full', 'input_kernel']:
+            raise ValueError("synaptic_release_mode must be 'full' or 'input_kernel'.")
         self.synaptic_release_groups = int(synaptic_release_groups)
+        if self.synaptic_release_mode == 'input_kernel' and self.synaptic_release_groups > 0:
+            raise ValueError("synaptic_release_groups is only supported when synaptic_release_mode='full'.")
         generator = torch.Generator(device='cpu')
         generator.manual_seed(int(synaptic_release_group_seed))
-        num_synapses = self.weight.numel()
-        fixed_count = int(round(num_synapses * float(synaptic_release_fixed_threshold_ratio)))
-        fixed_mask_flat = torch.zeros(num_synapses, dtype=torch.bool)
-        if fixed_count > 0:
-            fixed_idx = torch.randperm(num_synapses, generator=generator)[:fixed_count]
-            fixed_mask_flat[fixed_idx] = True
-        fixed_mask = fixed_mask_flat.view_as(self.weight)
-        learnable_mask = ~fixed_mask
-        self.register_buffer('release_fixed_mask', fixed_mask)
-        if self.synaptic_release_groups > 0:
+        if self.synaptic_release_mode == 'input_kernel':
             self.release_threshold = nn.Parameter(torch.full(
-                (self.synaptic_release_groups,), float(release_threshold_init),
+                self.weight.shape[1:], float(release_threshold_init),
                 dtype=self.weight.dtype, device=self.weight.device))
-            group_index = torch.randint(
-                self.synaptic_release_groups, self.weight.shape,
-                generator=generator, dtype=torch.long)
-            self.register_buffer('release_group_index', group_index)
-            self.register_buffer('release_learnable_mask', None)
-        elif fixed_count > 0:
-            learnable_count = int(learnable_mask.sum().item())
-            self.release_threshold = nn.Parameter(torch.full(
-                (learnable_count,), float(release_threshold_init),
-                dtype=self.weight.dtype, device=self.weight.device))
+            self.register_buffer('release_fixed_mask', None)
             self.register_buffer('release_group_index', None)
-            self.register_buffer('release_learnable_mask', learnable_mask)
+            self.register_buffer('release_learnable_mask', None)
         else:
-            self.release_threshold = nn.Parameter(torch.full_like(self.weight, float(release_threshold_init)))
-            self.register_buffer('release_group_index', None)
-            self.register_buffer('release_learnable_mask', None)
+            num_synapses = self.weight.numel()
+            fixed_count = int(round(num_synapses * float(synaptic_release_fixed_threshold_ratio)))
+            fixed_mask_flat = torch.zeros(num_synapses, dtype=torch.bool)
+            if fixed_count > 0:
+                fixed_idx = torch.randperm(num_synapses, generator=generator)[:fixed_count]
+                fixed_mask_flat[fixed_idx] = True
+            fixed_mask = fixed_mask_flat.view_as(self.weight)
+            learnable_mask = ~fixed_mask
+            self.register_buffer('release_fixed_mask', fixed_mask)
+            if self.synaptic_release_groups > 0:
+                self.release_threshold = nn.Parameter(torch.full(
+                    (self.synaptic_release_groups,), float(release_threshold_init),
+                    dtype=self.weight.dtype, device=self.weight.device))
+                group_index = torch.randint(
+                    self.synaptic_release_groups, self.weight.shape,
+                    generator=generator, dtype=torch.long)
+                self.register_buffer('release_group_index', group_index)
+                self.register_buffer('release_learnable_mask', None)
+            elif fixed_count > 0:
+                learnable_count = int(learnable_mask.sum().item())
+                self.release_threshold = nn.Parameter(torch.full(
+                    (learnable_count,), float(release_threshold_init),
+                    dtype=self.weight.dtype, device=self.weight.device))
+                self.register_buffer('release_group_index', None)
+                self.register_buffer('release_learnable_mask', learnable_mask)
+            else:
+                self.release_threshold = nn.Parameter(torch.full_like(self.weight, float(release_threshold_init)))
+                self.register_buffer('release_group_index', None)
+                self.register_buffer('release_learnable_mask', None)
         self.surrogate_function = surrogate_function
         self.synaptic_release_chunk_size = int(synaptic_release_chunk_size)
         self.last_release_gate = None
@@ -173,8 +192,11 @@ class SynapticReleaseConv2d(nn.Conv2d):
         self.last_release_source = None
 
     def _get_release_threshold(self, dtype, device):
-        fixed_threshold = torch.full_like(self.weight, self.release_threshold_min)
         release_threshold = torch.clamp(self.release_threshold, min=self.release_threshold_min)
+        if self.synaptic_release_mode == 'input_kernel':
+            return release_threshold.to(dtype=dtype, device=device)
+
+        fixed_threshold = torch.full_like(self.weight, self.release_threshold_min)
         if self.release_group_index is not None:
             release_threshold = release_threshold[self.release_group_index]
         elif self.release_learnable_mask is not None:
@@ -196,9 +218,30 @@ class SynapticReleaseConv2d(nn.Conv2d):
         v_cols = F.unfold(release_source, self.kernel_size, dilation=self.dilation, padding=self.padding, stride=self.stride)
         batch_size, in_kernel, num_locations = v_cols.shape
         weight_flat = self.weight.view(self.out_channels, in_kernel)
-        threshold_flat = self._get_release_threshold(dtype=x.dtype, device=x.device).view(self.out_channels, in_kernel)
+        threshold = self._get_release_threshold(dtype=x.dtype, device=x.device)
+        if self.synaptic_release_mode == 'input_kernel':
+            threshold_flat = threshold.view(in_kernel, 1)
+            release_arg = v_cols - threshold_flat.view(1, in_kernel, 1)
+            if self.surrogate_function is None:
+                release_gate = (release_arg >= 0.0).to(dtype=x.dtype)
+            else:
+                release_gate = self.surrogate_function(release_arg)
+            out = torch.einsum('oi,bil->bol', weight_flat, release_gate)
+            if self.bias is not None:
+                out = out + self.bias.view(1, -1, 1)
+
+            out_h = (x.shape[-2] + 2 * self.padding[0] - self.dilation[0] * (self.kernel_size[0] - 1) - 1) // self.stride[0] + 1
+            out_w = (x.shape[-1] + 2 * self.padding[1] - self.dilation[1] * (self.kernel_size[1] - 1) - 1) // self.stride[1] + 1
+            self.last_release_gate = None
+            self.last_release_gate_mean = release_gate.detach().mean()
+            self.last_release_source = release_source.detach()
+            return out.view(batch_size, self.out_channels, out_h, out_w)
+
+        threshold_flat = threshold.view(self.out_channels, in_kernel)
 
         def release_chunk(v_cols_chunk, weight_chunk, threshold_chunk):
+            if threshold_chunk.shape[0] == 1:
+                threshold_chunk = threshold_chunk.expand(weight_chunk.shape[0], -1)
             release_arg = v_cols_chunk.unsqueeze(1) - threshold_chunk.view(1, weight_chunk.shape[0], in_kernel, 1)
             if self.surrogate_function is None:
                 release_gate = (release_arg >= 0.0).to(dtype=x.dtype)
@@ -213,14 +256,15 @@ class SynapticReleaseConv2d(nn.Conv2d):
         for start in range(0, self.out_channels, chunk_size):
             end = min(start + chunk_size, self.out_channels)
             weight_chunk = weight_flat[start:end]
-            threshold_chunk = threshold_flat[start:end]
+            threshold_chunk = threshold_flat if threshold_flat.shape[0] == 1 else threshold_flat[start:end]
             if self.training and torch.is_grad_enabled():
                 out_chunk = checkpoint(release_chunk, v_cols, weight_chunk, threshold_chunk, use_reentrant=False)
             else:
                 out_chunk = release_chunk(v_cols, weight_chunk, threshold_chunk)
             out_chunks.append(out_chunk)
             with torch.no_grad():
-                release_arg = v_cols.unsqueeze(1) - threshold_chunk.view(1, end - start, in_kernel, 1)
+                threshold_for_stats = threshold_chunk.expand(end - start, -1) if threshold_chunk.shape[0] == 1 else threshold_chunk
+                release_arg = v_cols.unsqueeze(1) - threshold_for_stats.view(1, end - start, in_kernel, 1)
                 if self.surrogate_function is None:
                     gate_chunk = (release_arg >= 0.0).to(dtype=x.dtype)
                 else:
@@ -319,6 +363,7 @@ class SpikingVGGBN(nn.Module):
                         synaptic_release_chunk_size=neuron_kwargs.get('synaptic_release_chunk_size', 16),
                         synaptic_release_groups=neuron_kwargs.get('synaptic_release_groups', 0),
                         release_threshold_min=neuron_kwargs.get('v_threshold', 1.0),
+                        synaptic_release_mode=neuron_kwargs.get('synaptic_release_mode', 'full'),
                         synaptic_release_fixed_threshold_ratio=neuron_kwargs.get('synaptic_release_fixed_threshold_ratio', 0.5),
                         synaptic_release_group_seed=neuron_kwargs.get('synaptic_release_group_seed', 2022),
                     ))
