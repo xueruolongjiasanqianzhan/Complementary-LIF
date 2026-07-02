@@ -220,9 +220,24 @@ class SynapticReleaseConv2d(nn.Conv2d):
         weight_flat = self.weight.view(self.out_channels, in_kernel)
         threshold = self._get_release_threshold(dtype=x.dtype, device=x.device)
         if self.synaptic_release_mode == 'input_kernel':
-            threshold_flat = threshold.view(1, in_kernel)
-        else:
-            threshold_flat = threshold.view(self.out_channels, in_kernel)
+            threshold_flat = threshold.view(in_kernel, 1)
+            release_arg = v_cols - threshold_flat.view(1, in_kernel, 1)
+            if self.surrogate_function is None:
+                release_gate = (release_arg >= 0.0).to(dtype=x.dtype)
+            else:
+                release_gate = self.surrogate_function(release_arg)
+            out = torch.einsum('oi,bil->bol', weight_flat, release_gate)
+            if self.bias is not None:
+                out = out + self.bias.view(1, -1, 1)
+
+            out_h = (x.shape[-2] + 2 * self.padding[0] - self.dilation[0] * (self.kernel_size[0] - 1) - 1) // self.stride[0] + 1
+            out_w = (x.shape[-1] + 2 * self.padding[1] - self.dilation[1] * (self.kernel_size[1] - 1) - 1) // self.stride[1] + 1
+            self.last_release_gate = None
+            self.last_release_gate_mean = release_gate.detach().mean()
+            self.last_release_source = release_source.detach()
+            return out.view(batch_size, self.out_channels, out_h, out_w)
+
+        threshold_flat = threshold.view(self.out_channels, in_kernel)
 
         def release_chunk(v_cols_chunk, weight_chunk, threshold_chunk):
             if threshold_chunk.shape[0] == 1:
