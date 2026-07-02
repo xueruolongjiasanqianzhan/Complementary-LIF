@@ -117,6 +117,14 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
+    parser.add_argument('-release_threshold_init', type=float, default=1.0, help='for synaptic release layers: initial release threshold, constrained to [v_threshold, +inf)')
+    parser.add_argument('-v_threshold', type=float, default=1.0, help='shared soma firing threshold for LIF-family neurons')
+    parser.add_argument('-synaptic_release_enable', action='store_true', help='enable learnable release thresholds inside supported Conv2d layers')
+    parser.add_argument('-synaptic_release_mode', type=str, default='full', choices=['full', 'input_kernel', 'spatial_input_kernel'], help='for synaptic release Conv2d: full, input_kernel, or spatial_input_kernel threshold sharing')
+    parser.add_argument('-synaptic_release_chunk_size', type=int, default=16, help='for synaptic release Conv2d: output channels processed per chunk')
+    parser.add_argument('-synaptic_release_groups', type=int, default=0, help='for synaptic release Conv2d full mode: number of random threshold-sharing groups')
+    parser.add_argument('-synaptic_release_fixed_threshold_ratio', type=float, default=0.5, help='for synaptic release full mode: fraction fixed to v_threshold')
+    parser.add_argument('-synaptic_release_group_seed', type=int, default=2022, help='for synaptic release full mode: random seed')
     parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), SCRLIF (Spike-Cause Reset LIF), SCRLIFV2, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, RCMLIF, TLIF, LSLIF, LSLIF2, LSLIF3, LSLIF4, CLIF, PLIF, relu')
     parser.add_argument('-multiple_step', type=bool, default=False, help='whether multiple steps')
     parser.add_argument('-cutupmix_auto', action='store_true', help='cutupmix autoaugmentation for cifar and tinyimagenet')
@@ -199,6 +207,8 @@ def main():
     parser.set_defaults(dgn_learn_c=True, dgn_learn_w=True, lifdgn_learn_g0=True, lifdgn_learn_c=True)
 
     args = parser.parse_args()
+    if args.synaptic_release_mode in ['input_kernel', 'spatial_input_kernel'] and args.synaptic_release_groups > 0:
+        raise ValueError('-synaptic_release_groups is only supported when -synaptic_release_mode full.')
     if args.neuron_model == 'LSLIF2' and (args.history_learn_power or abs(float(args.history_power) - 1.0) > 1e-12):
         print('警告: LSLIF2 使用总膜残余副膜；direct 模式直接叠加副膜，scaled_avg 模式固定 history_power=1.0 且不学习；history_growth 仅保留兼容但无效。')
         args.history_power = 1.0
@@ -302,6 +312,7 @@ def main():
     elif args.dataset == 'DVSCIFAR10':
         c_in = 2
         num_classes = 10
+        in_dim = 48
 
         transform_train = transforms.Compose([
             ToPILImage(),
@@ -445,6 +456,14 @@ def main():
 
     neuron_kwargs = dict(
         tau=args.tau,
+        v_threshold=args.v_threshold,
+        release_threshold_init=args.release_threshold_init,
+        synaptic_release_enable=args.synaptic_release_enable,
+        synaptic_release_mode=args.synaptic_release_mode,
+        synaptic_release_chunk_size=args.synaptic_release_chunk_size,
+        synaptic_release_groups=args.synaptic_release_groups,
+        synaptic_release_fixed_threshold_ratio=args.synaptic_release_fixed_threshold_ratio,
+        synaptic_release_group_seed=args.synaptic_release_group_seed,
         surrogate_function=surrogate_function,
         tau_mode=args.tau_mode,
         tau_lo=args.tau_lo,
