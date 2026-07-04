@@ -154,8 +154,8 @@ def main():
     parser.add_argument('-history_growth', type=float, default=1.1, help='for LSLIF2 only: deprecated compatibility argument; residual-memory LSLIF2 ignores it')
     parser.add_argument('-lslif2_aux_mode', type=str, default='direct', choices=['direct', 'scaled_avg'], help='for LSLIF2 only: auxiliary residual fusion; direct adds residual membrane directly (default), scaled_avg uses history_weight * residual / t')
     parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF-family/TLIF only: make history_weight learnable')
-    parser.add_argument('-history_weight_lo', type=float, default=-0.8, help='for LSLIF-family/TLIF only: lower bound for learnable history_weight')
-    parser.add_argument('-history_weight_hi', type=float, default=0.8, help='for LSLIF-family/TLIF only: upper bound for learnable history_weight')
+    parser.add_argument('-history_weight_lo', type=float, default=None, help='for LSLIF-family/TLIF only: optional lower bound for learnable history_weight; pass with -history_weight_hi to enable bounded mode')
+    parser.add_argument('-history_weight_hi', type=float, default=None, help='for LSLIF-family/TLIF only: optional upper bound for learnable history_weight; pass with -history_weight_lo to enable bounded mode')
     parser.add_argument('-history_weight_per_step', action='store_true', help='for LSLIF-family/TLIF only: use one learnable history_weight per time-step')
     parser.add_argument('-history_learn_power', action='store_true', help='for LSLIF-family/TLIF only: make history_power learnable')
     parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike', 'half'], help='for LSLIF-family/TLIF only: history mode (all, post_spike, or half: shallow post_spike and deep all)')
@@ -619,10 +619,15 @@ def main():
     if args.neuron_model != 'LIF':
         out_dir += f'_{args.neuron_model}_'
     if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSLIF3', 'LSLIF4', 'TLIF']:
+        history_weight_range_tag = (
+            'unbounded'
+            if args.history_weight_lo is None and args.history_weight_hi is None
+            else f'lo{args.history_weight_lo}_hi{args.history_weight_hi}'
+        )
         out_dir += (
             f'_hw{args.history_weight}_hp{args.history_power}_he{args.history_eps}_hm{args.history_mode}'
             f'_hlw{int(args.history_learn_weight)}_hps{int(args.history_weight_per_step)}'
-            f'_hlo{args.history_weight_lo}_hhi{args.history_weight_hi}_hlp{int(args.history_learn_power)}'
+            f'_hbound{history_weight_range_tag}_hlp{int(args.history_learn_power)}'
         )
         if args.neuron_model == 'LSLIF2':
             out_dir += f'_hg_unused{args.history_growth}_aux{args.lslif2_aux_mode}'

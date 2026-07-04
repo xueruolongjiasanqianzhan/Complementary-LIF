@@ -180,8 +180,8 @@ def main():
     parser.add_argument('-history_growth', type=float, default=1.1, help='for LSLIF2 only: deprecated compatibility argument; residual-memory LSLIF2 ignores it')
     parser.add_argument('-lslif2_aux_mode', type=str, default='direct', choices=['direct', 'scaled_avg'], help='for LSLIF2 only: auxiliary residual fusion; direct adds residual membrane directly (default), scaled_avg uses history_weight * residual / t')
     parser.add_argument('-history_learn_weight', action='store_true', help='for LSLIF-family/TLIF only: make history_weight learnable')
-    parser.add_argument('-history_weight_lo', type=float, default=-0.8, help='for LSLIF-family/TLIF only: lower bound for learnable history_weight')
-    parser.add_argument('-history_weight_hi', type=float, default=0.8, help='for LSLIF-family/TLIF only: upper bound for learnable history_weight')
+    parser.add_argument('-history_weight_lo', type=float, default=None, help='for LSLIF-family/TLIF only: optional lower bound for learnable history_weight; pass with -history_weight_hi to enable bounded mode')
+    parser.add_argument('-history_weight_hi', type=float, default=None, help='for LSLIF-family/TLIF only: optional upper bound for learnable history_weight; pass with -history_weight_lo to enable bounded mode')
     parser.add_argument('-history_weight_per_step', action='store_true', help='for LSLIF-family/TLIF only: use one learnable history_weight per time-step')
     parser.add_argument('-history_learn_power', action='store_true', help='for LSLIF-family/TLIF only: make history_power learnable')
     parser.add_argument('-history_mode', type=str, default='all', choices=['all', 'post_spike', 'half'], help='for LSLIF-family/TLIF only: history mode (all, post_spike, or half: shallow post_spike and deep all)')
@@ -875,6 +875,7 @@ def main():
     if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSLIF3', 'LSLIF4', 'LSCLIF', 'LSPLIF', 'TLIF', 'LSTernary']:
         history_weight_can_learn = '是' if args.history_learn_weight else '否'
         history_weight_per_step = '是' if args.history_weight_per_step else '否'
+        history_weight_range = '无' if args.history_weight_lo is None and args.history_weight_hi is None else f'{args.history_weight_lo}到{args.history_weight_hi}'
         history_power_can_learn = '是' if args.history_learn_power else '否'
         run_name_parts.extend([
             f'历史权重{args.history_weight}',
@@ -883,8 +884,7 @@ def main():
             f'历史模式{args.history_mode}',
             f'历史权重可学习{history_weight_can_learn}',
             f'历史权重逐时间步{history_weight_per_step}',
-            f'历史权重下界{args.history_weight_lo}',
-            f'历史权重上界{args.history_weight_hi}',
+            f'历史权重范围{history_weight_range}',
             f'历史幂次可学习{history_power_can_learn}',
         ])
         if args.neuron_model == 'LSLIF2':
