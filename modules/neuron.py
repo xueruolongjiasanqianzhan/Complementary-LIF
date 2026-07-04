@@ -448,8 +448,8 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
         history_power: float = 1.0,
         history_eps: float = 1e-6,
         history_learn_weight: bool = False,
-        history_weight_lo: float = -0.8,
-        history_weight_hi: float = 0.8,
+        history_weight_lo: Optional[float] = None,
+        history_weight_hi: Optional[float] = None,
         history_weight_per_step: bool = False,
         history_max_steps: int = 16,
         history_learn_power: bool = False,
@@ -487,9 +487,12 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
                 self.history_mode = 'all'
             else:
                 self.history_mode = 'post_spike' if self.layer_index < (self.total_layers // 2) else 'all'
-        self.history_weight_lo = float(history_weight_lo)
-        self.history_weight_hi = float(history_weight_hi)
-        if self.history_weight_hi <= self.history_weight_lo:
+        self.history_weight_bounded = history_weight_lo is not None or history_weight_hi is not None
+        if self.history_weight_bounded and (history_weight_lo is None or history_weight_hi is None):
+            raise ValueError('history_weight_lo and history_weight_hi must be provided together.')
+        self.history_weight_lo = float(history_weight_lo) if history_weight_lo is not None else None
+        self.history_weight_hi = float(history_weight_hi) if history_weight_hi is not None else None
+        if self.history_weight_bounded and self.history_weight_hi <= self.history_weight_lo:
             raise ValueError('history_weight_hi must be larger than history_weight_lo.')
         self.history_power_lo = 0.0
         self.history_power_hi = 2.0
@@ -508,19 +511,22 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
             x_t = torch.tensor(float(x), dtype=torch.float32).clamp(1e-6, 1.0 - 1e-6)
             return float(torch.log(x_t / (1.0 - x_t)).item())
 
+        def _inv_softplus(x: float) -> float:
+            x_t = torch.tensor(float(x), dtype=torch.float32).clamp_min(1e-6)
+            return float(torch.log(torch.expm1(x_t)).item())
+
         if self.history_learn_weight:
-            if self.history_weight_per_step:
+            if self.history_weight_bounded:
                 init_weight = float(np.clip(self.history_weight, self.history_weight_lo, self.history_weight_hi))
                 scale = self.history_weight_hi - self.history_weight_lo
                 init_unit = (init_weight - self.history_weight_lo) / max(scale, 1e-6)
                 init_raw = _inv_sigmoid(init_unit)
+            else:
+                init_raw = _inv_softplus(self.history_weight)
+            if self.history_weight_per_step:
                 init_tensor = torch.full((self.history_max_steps,), init_raw, dtype=torch.float32)
                 self.history_weight_raw = nn.Parameter(init_tensor)
             else:
-                init_weight = float(np.clip(self.history_weight, self.history_weight_lo, self.history_weight_hi))
-                scale = self.history_weight_hi - self.history_weight_lo
-                init_unit = (init_weight - self.history_weight_lo) / max(scale, 1e-6)
-                init_raw = _inv_sigmoid(init_unit)
                 self.history_weight_raw = nn.Parameter(torch.tensor(init_raw, dtype=torch.float32))
         if self.history_learn_power:
             init_power = float(np.clip(self.history_power, self.history_power_lo, self.history_power_hi))
@@ -560,8 +566,11 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
                 weight_raw = self.history_weight_raw[idx]
             else:
                 weight_raw = self.history_weight_raw
-            weight_unit = torch.sigmoid(weight_raw)
-            weight = self.history_weight_lo + (self.history_weight_hi - self.history_weight_lo) * weight_unit
+            if self.history_weight_bounded:
+                weight_unit = torch.sigmoid(weight_raw)
+                weight = self.history_weight_lo + (self.history_weight_hi - self.history_weight_lo) * weight_unit
+            else:
+                weight = F.softplus(weight_raw)
             return weight.to(dtype=dtype, device=device)
         return torch.as_tensor(self.history_weight, dtype=dtype, device=device)
 
@@ -1342,8 +1351,8 @@ class ThresholdLadderLIFNeuron(LSLIFNeuron):
         history_power: float = 1.0,
         history_eps: float = 1e-6,
         history_learn_weight: bool = False,
-        history_weight_lo: float = -0.8,
-        history_weight_hi: float = 0.8,
+        history_weight_lo: Optional[float] = None,
+        history_weight_hi: Optional[float] = None,
         history_weight_per_step: bool = False,
         history_max_steps: int = 16,
         history_learn_power: bool = False,
