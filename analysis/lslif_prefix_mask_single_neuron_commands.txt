@@ -1,0 +1,14 @@
+# Single-neuron prefix-mask visualization for the LS history effect.
+# The default setting generates an SVG figure with:
+#   1) original vs prefix-masked input curves,
+#   2) LIF and LSLIF decision-membrane curves over time,
+#   3) spike-raster comparisons for original and masked inputs.
+
+python analysis/lslif_prefix_mask_single_neuron.py \
+  --out-dir analysis_results/lslif_prefix_mask_single_neuron
+
+# Optional: use the repository-style LSLIF history weight instead of the stronger
+# illustrative default used to make the single-neuron effect easier to see.
+python analysis/lslif_prefix_mask_single_neuron.py \
+  --history-weight 1.0 \
+  --out-dir analysis_results/lslif_prefix_mask_single_neuron_hw1
