@@ -126,7 +126,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), SRLIF (Synaptic Release LIF), SCRLIF (Spike-Cause Reset LIF), SCRLIFV2, HALIF, ZELIF, IDISILIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, Ternary, LSTernary, QKVLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), SRLIF (Synaptic Release LIF), SCRLIF (Spike-Cause Reset LIF), SCRLIFV2, HALIF, ZELIF, IDISILIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, RPLIF, LSRPLIF, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, Ternary, LSTernary, QKVLIF, CLIF, PLIF, relu')
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
     parser.add_argument('-idisi_max_inverse_decay', type=float, default=8.0, help='for IDISILIF only: clamp for inverse-decay ISI credit')
     parser.add_argument('-idisi_eps', type=float, default=1e-6, help='for IDISILIF only: numerical epsilon for threshold and decay')
@@ -194,6 +194,9 @@ def main():
     parser.add_argument('-qkv_max_history', type=int, default=0, help='for QKVLIF only: max cached historical steps; 0 keeps all causal history')
     parser.add_argument('-qkv_detach_history', type=bool, default=False, help='for QKVLIF only: detach cached historical membrane/input tensors')
     parser.add_argument('-ternary_decay', type=float, default=0.25, help='for Ternary and LSTernary only: fixed membrane decay used by borrowed 三值神经元 LIFAct')
+    parser.add_argument('-rplif_alpha', type=float, default=1.5, help='for RPLIF/LSRPLIF only: multiplicative spike-triggered threshold factor')
+    parser.add_argument('-rplif_v_init_th', type=float, default=None, help='for RPLIF/LSRPLIF only: initial dynamic threshold; defaults to v_threshold')
+    parser.add_argument('-refractory_step', type=int, default=1, help='for RPLIF/LSRPLIF only: paper default is 1')
     parser.add_argument('-tlif_lambda', type=float, default=0.5, help='for TLIF only: per-step threshold growth ratio based on the current-prev threshold gap')
     parser.add_argument('-tlif_theta', type=float, default=None, help='for TLIF only: base threshold interval; defaults to v_threshold')
     parser.add_argument('-tlif_alpha', type=float, default=0.5, help='deprecated for TLIF: ignored by the LSLIF-aligned implementation')
@@ -528,6 +531,10 @@ def main():
         neuron_model = neuron.TernarySpikeNeuron
     elif args.neuron_model == 'LSTernary':
         neuron_model = neuron.LSTernarySpikeNeuron
+    elif args.neuron_model == 'RPLIF':
+        neuron_model = neuron.RPLIFNeuron
+    elif args.neuron_model == 'LSRPLIF':
+        neuron_model = neuron.LSRPLIFNeuron
     elif args.neuron_model == 'LSLIF':
         neuron_model = neuron.LSLIFNeuron
     elif args.neuron_model == 'LSLIF2':
@@ -631,6 +638,9 @@ def main():
         history_max_steps=args.T,
         history_learn_power=args.history_learn_power,
         history_mode=args.history_mode,
+        rplif_alpha=args.rplif_alpha,
+        rplif_v_init_th=args.rplif_v_init_th,
+        refractory_step=args.refractory_step,
         rcm_lambda=args.rcm_lambda,
         rcm_eta=args.rcm_eta,
         rcm_beta=args.rcm_beta,
@@ -872,7 +882,7 @@ def main():
         ])
     if args.neuron_model in ['Ternary', 'LSTernary']:
         run_name_parts.append(f'三值衰减{args.ternary_decay}')
-    if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSLIF3', 'LSLIF4', 'LSCLIF', 'LSPLIF', 'TLIF', 'LSTernary']:
+    if args.neuron_model in ['LSLIF', 'LSLIF2', 'LSLIF3', 'LSLIF4', 'LSCLIF', 'LSPLIF', 'TLIF', 'LSTernary', 'LSRPLIF']:
         history_weight_can_learn = '是' if args.history_learn_weight else '否'
         history_weight_per_step = '是' if args.history_weight_per_step else '否'
         history_weight_range = '无' if args.history_weight_lo is None and args.history_weight_hi is None else f'{args.history_weight_lo}到{args.history_weight_hi}'
@@ -898,6 +908,12 @@ def main():
                 f'tlif_theta{args.tlif_theta}',
                 f'tlif_min_interval{args.tlif_min_interval}',
             ])
+    if args.neuron_model in ['RPLIF', 'LSRPLIF']:
+        run_name_parts.extend([
+            f'RPLIFalpha{args.rplif_alpha}',
+            f'RPLIFinit{args.v_threshold if args.rplif_v_init_th is None else args.rplif_v_init_th}',
+            f'RPLIFstep{args.refractory_step}',
+        ])
     if args.neuron_model == 'QKVLIF':
         alpha_can_learn = '是' if args.qkv_learn_alpha else '否'
         weights_can_learn = '是' if args.qkv_learn_w else '否'

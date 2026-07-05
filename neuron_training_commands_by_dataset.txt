@@ -31,6 +31,10 @@
 #    -synaptic_release_fixed_threshold_ratio 0.5：full 模式下随机固定一半突触阈值为 v_threshold，其余阈值参与学习，降低参数量并稳定训练。
 #    开启后突触释放由 presynaptic reset 前膜电位和突触阈值决定；阈值不低于胞体阈值，因此释放要求膜电位达到会触发胞体发放的水平。
 #    -synaptic_release_chunk_size：full Conv 版本按输出通道分块计算释放门；input_kernel/spatial_input_kernel 快路径与 FC 版本通常不需要设置该参数。
+# 8) RPLIF / LSRPLIF 专属参数说明（方便调参）：
+#    -rplif_alpha 1.5：spike 后下一时间步阈值乘法升高系数；1.0 退化为普通 LIF 阈值行为，论文推荐相对不应期默认 1.5。
+#    -rplif_v_init_th：动态阈值初始值；不显式传入时默认等于 -v_threshold。
+#    -refractory_step 1：论文推荐的一步阈值动态；实现不冻结膜电位、不丢弃下一步输入。
 
 ############################################################
 # CIFAR-10
@@ -38,6 +42,9 @@
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIF
+# RPLIF（相对不应期 LIF；spike 后按逐神经元动态阈值抬高下一步阈值，默认 alpha=1.5、step=1）
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model RPLIF \
+  -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
 # Ternary（三值脉冲神经元，输出 {-1,0,+1}；按 v_threshold 归一化后在 ±0.5 处触发，正/负 spike 均软重置）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model Ternary
 # LSTernary（三值脉冲神经元 + LSLIF 风格 LS/history 支路）
@@ -105,6 +112,9 @@ python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T
 # LSLIF（特有参数：history 分支）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+# LSRPLIF（LSLIF history 分支 + RPLIF 动态阈值；默认 alpha=1.5、step=1）
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSRPLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
 
 # LSLIF2（特有参数：总膜残余副膜；history_growth 已废弃，不需要传）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF2 \
@@ -145,6 +155,9 @@ python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIF
+# RPLIF（相对不应期 LIF；spike 后按逐神经元动态阈值抬高下一步阈值，默认 alpha=1.5、step=1）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model RPLIF \
+  -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
 # Ternary（三值脉冲神经元，输出 {-1,0,+1}；按 v_threshold 归一化后在 ±0.5 处触发，正/负 spike 均软重置）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model Ternary
 # LSTernary（三值脉冲神经元 + LSLIF 风格 LS/history 支路）
@@ -212,6 +225,9 @@ python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -
 # LSLIF（特有参数：history 分支）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+# LSRPLIF（LSLIF history 分支 + RPLIF 动态阈值；默认 alpha=1.5、step=1）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSRPLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
 
 # LSLIF2（特有参数：总膜残余副膜；history_growth 已废弃，不需要传）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF2 \
@@ -252,6 +268,9 @@ python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIF
+# RPLIF（相对不应期 LIF；spike 后按逐神经元动态阈值抬高下一步阈值，默认 alpha=1.5、step=1）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model RPLIF \
+  -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
 # Ternary（三值脉冲神经元，输出 {-1,0,+1}；按 v_threshold 归一化后在 ±0.5 处触发，正/负 spike 均软重置）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model Ternary
 # LSTernary（三值脉冲神经元 + LSLIF 风格 LS/history 支路）
@@ -322,6 +341,9 @@ python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13
 # LSLIF（特有参数：history 分支）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+# LSRPLIF（LSLIF history 分支 + RPLIF 动态阈值；默认 alpha=1.5、step=1）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSRPLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
 
 # LSLIF2（特有参数：总膜残余副膜；history_growth 已废弃，不需要传）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSLIF2 \
@@ -362,6 +384,9 @@ python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13
 
 # LIF（vanilla，无额外特有参数；VGG 基线）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIF
+# RPLIF（相对不应期 LIF；spike 后按逐神经元动态阈值抬高下一步阈值，默认 alpha=1.5、step=1）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model RPLIF \
+  -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
 # Ternary（三值脉冲神经元，输出 {-1,0,+1}；按 v_threshold 归一化后在 ±0.5 处触发，正/负 spike 均软重置）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model Ternary
 # LSTernary（三值脉冲神经元 + LSLIF 风格 LS/history 支路）
@@ -448,6 +473,9 @@ python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -m
 # LSLIF（特有参数：history 分支）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+# LSRPLIF（LSLIF history 分支 + RPLIF 动态阈值；默认 alpha=1.5、step=1）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSRPLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
 
 # LSLIF2（特有参数：总膜残余副膜；history_growth 已废弃，不需要传）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSLIF2 \
@@ -488,6 +516,9 @@ python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -m
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIF
+# RPLIF（相对不应期 LIF；spike 后按逐神经元动态阈值抬高下一步阈值，默认 alpha=1.5、step=1）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model RPLIF \
+  -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
 # Ternary（三值脉冲神经元，输出 {-1,0,+1}；按 v_threshold 归一化后在 ±0.5 处触发，正/负 spike 均软重置）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model Ternary
 # LSTernary（三值脉冲神经元 + LSLIF 风格 LS/history 支路）
@@ -558,6 +589,9 @@ python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn
 # LSLIF（特有参数：history 分支）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+# LSRPLIF（LSLIF history 分支 + RPLIF 动态阈值；默认 alpha=1.5、step=1）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSRPLIF \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
 
 # LSLIF2（特有参数：总膜残余副膜；history_growth 已废弃，不需要传）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF2 \
