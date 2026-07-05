@@ -621,6 +621,158 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
         return spike.to(dtype=x.dtype)
 
 
+class RPLIFNeuron(ASNFireMixin, nn.Module):
+    """Refractory-Period LIF with spike-triggered threshold dynamics.
+
+    After each spike decision and hard reset, every neuron/position updates its
+    own threshold for the next step as
+
+        V_th_next = V_init_th * (1 - S_t) + alpha * V_th_current * S_t
+
+    This realizes a relative refractory period without freezing membrane
+    dynamics or discarding the next input current.
+    """
+
+    def __init__(
+        self,
+        tau: float = 2.0,
+        decay_input: bool = False,
+        v_threshold: float = 1.0,
+        v_reset: Optional[float] = None,
+        surrogate_function: Optional[Callable] = None,
+        detach_reset: bool = True,
+        tau_eps: float = 1e-6,
+        rplif_alpha: float = 1.5,
+        rplif_v_init_th: Optional[float] = None,
+        refractory_step: int = 1,
+        layer_index: Optional[int] = None,
+        asn_enable: bool = False,
+        asn_p: float = 0.5,
+        asn_rho: float = 0.5,
+        asn_seed: int = 2022,
+        asn_detach_lateral: bool = False,
+        **kwargs,
+    ):
+        super().__init__()
+        if int(refractory_step) != 1:
+            raise ValueError('RPLIF currently implements the paper default refractory_step=1 threshold dynamics.')
+        self.tau = float(tau)
+        self.decay_input = bool(decay_input)
+        self.v_threshold = float(v_threshold)
+        self.v_init_th = float(v_threshold if rplif_v_init_th is None else rplif_v_init_th)
+        self.v_reset = 0.0 if v_reset is None else float(v_reset)
+        self.detach_reset = bool(detach_reset)
+        self.tau_eps = float(tau_eps)
+        self.rplif_alpha = float(rplif_alpha)
+        self.refractory_step = int(refractory_step)
+        self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
+        self._init_asn(
+            asn_enable=asn_enable,
+            asn_p=asn_p,
+            asn_rho=asn_rho,
+            asn_seed=asn_seed,
+            asn_detach_lateral=asn_detach_lateral,
+            layer_index=layer_index,
+            **_success_modulation_kwargs(kwargs),
+        )
+        self.v = None
+        self.dynamic_threshold = None
+
+    def reset(self):
+        self.v = None
+        self.dynamic_threshold = None
+
+    def reset_state(self):
+        self.reset()
+
+    def _ensure_state(self, x: torch.Tensor):
+        need_init = self.v is None or self.v.shape != x.shape or self.v.device != x.device
+        if need_init:
+            self.v = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+            self.dynamic_threshold = torch.full_like(self.v, self.v_init_th)
+
+    def _charge(self, x_f: torch.Tensor) -> torch.Tensor:
+        tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
+        if self.decay_input:
+            return self.v + (x_f - self.v) / (tau_eff + self.tau_eps)
+        decay = 1.0 - 1.0 / (tau_eff + self.tau_eps)
+        decay = torch.clamp(decay, 0.0, 1.0)
+        return self.v * decay + x_f
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+        u_t = self._charge(x_f)
+        threshold = self.dynamic_threshold.to(device=u_t.device, dtype=u_t.dtype)
+        spike = self._success_fire(u_t, threshold)
+        rs = spike.detach() if self.detach_reset else spike
+        v_reset_t = torch.as_tensor(self.v_reset, device=u_t.device, dtype=u_t.dtype)
+        self.v = u_t * (1.0 - rs) + v_reset_t * rs
+        s_for_threshold = spike.detach()
+        init_th = torch.as_tensor(self.v_init_th, device=u_t.device, dtype=u_t.dtype)
+        alpha = torch.as_tensor(self.rplif_alpha, device=u_t.device, dtype=u_t.dtype)
+        self.dynamic_threshold = init_th * (1.0 - s_for_threshold) + alpha * threshold * s_for_threshold
+        self._cache_success_spike(spike)
+        return spike.to(dtype=x.dtype)
+
+
+class LSRPLIFNeuron(LSLIFNeuron):
+    """LSLIF auxiliary-history branch plus RPLIF dynamic thresholds."""
+
+    def __init__(self, *args, rplif_alpha: float = 1.5, rplif_v_init_th: Optional[float] = None,
+                 refractory_step: int = 1, detach_reset: bool = True, **kwargs):
+        if int(refractory_step) != 1:
+            raise ValueError('LSRPLIF currently implements the paper default refractory_step=1 threshold dynamics.')
+        super().__init__(*args, detach_reset=detach_reset, **kwargs)
+        self.v_init_th = float(self.v_threshold if rplif_v_init_th is None else rplif_v_init_th)
+        self.rplif_alpha = float(rplif_alpha)
+        self.refractory_step = int(refractory_step)
+        self.dynamic_threshold = None
+
+    def reset(self):
+        super().reset()
+        self.dynamic_threshold = None
+
+    def _ensure_state(self, x: torch.Tensor):
+        super()._ensure_state(x)
+        if self.dynamic_threshold is None or self.dynamic_threshold.shape != x.shape or self.dynamic_threshold.device != x.device:
+            self.dynamic_threshold = torch.full_like(self.v, self.v_init_th)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+        tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
+        if self.decay_input:
+            m_t = self.v + (x_f - self.v) / (tau_eff + self.tau_eps)
+            n_t = self.n + (x_f - self.n) / (tau_eff + self.tau_eps)
+        else:
+            decay = torch.clamp(1.0 - 1.0 / (tau_eff + self.tau_eps), 0.0, 1.0)
+            m_t = self.v * decay + x_f
+            n_t = self.n * decay + x_f
+
+        self.step_count += 1
+        step_t = torch.as_tensor(float(self.step_count), device=m_t.device, dtype=m_t.dtype)
+        norm = torch.pow(step_t + self.history_eps, self._get_history_power(dtype=m_t.dtype, device=m_t.device))
+        history_term = self._get_history_weight(dtype=m_t.dtype, device=m_t.device, step_count=self.step_count) * (n_t / norm)
+        if self.history_mode == 'post_spike':
+            history_term = history_term * self.has_fired.to(dtype=history_term.dtype)
+        total_mem = m_t + history_term
+
+        threshold = self.dynamic_threshold.to(device=total_mem.device, dtype=total_mem.dtype)
+        spike = self._success_fire(total_mem, threshold)
+        rs = spike.detach() if self.detach_reset else spike
+        self.v = m_t * (1.0 - rs)
+        self.n = n_t
+        self.has_fired = torch.logical_or(self.has_fired, rs.bool())
+
+        s_for_threshold = spike.detach()
+        init_th = torch.as_tensor(self.v_init_th, device=total_mem.device, dtype=total_mem.dtype)
+        alpha = torch.as_tensor(self.rplif_alpha, device=total_mem.device, dtype=total_mem.dtype)
+        self.dynamic_threshold = init_th * (1.0 - s_for_threshold) + alpha * threshold * s_for_threshold
+        self._cache_success_spike(spike)
+        return spike.to(dtype=x.dtype)
+
+
 class LSTernarySpikeNeuron(LSLIFNeuron):
     """Ternary spike neuron with the LSLIF auxiliary history (LS) branch.
 
