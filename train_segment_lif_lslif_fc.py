@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""被试内 EEG segment 数据上的两层全连接 SNN baseline：LIF vs LSLIF。
+"""被试内 EEG segment 数据上的单层全连接 SNN baseline：LIF vs LSLIF。
 
 本文件是一个自包含实验脚本：不依赖项目内的 logs、model 或 modules 文件。
 默认数据路径沿用 train_segment.py 的 Self-data/new-segment 被试内划分；如需换路径，
@@ -10,7 +10,7 @@
   - label: [N]
 脚本会把每个样本按 750 个原始采样点展开为 SNN 时间步：
   [B, 1, 61, 750] -> [750, B, 61]
-并分别训练 LIF 与 LSLIF 两个两层全连接网络进行对比。
+并分别训练 LIF 与 LSLIF 两个单层全连接网络进行对比。
 """
 
 import argparse
@@ -213,12 +213,11 @@ class EEGSegmentDataset(Dataset):
         return torch.from_numpy(fea), torch.tensor(label, dtype=torch.long)
 
 
-class TwoLayerFCSNN(nn.Module):
-    def __init__(self, neuron_type: str, input_dim: int = 61, hidden_dim: int = 128, num_classes: int = 2, **neuron_kwargs):
+class SingleLayerFCSNN(nn.Module):
+    def __init__(self, neuron_type: str, input_dim: int = 61, num_classes: int = 2, **neuron_kwargs):
         super().__init__()
         self.neuron_type = neuron_type.upper()
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, num_classes)
+        self.fc = nn.Linear(input_dim, num_classes)
         if self.neuron_type == "LIF":
             self.neuron = LIFNeuron(**{k: v for k, v in neuron_kwargs.items() if not k.startswith("history_")})
         elif self.neuron_type == "LSLIF":
@@ -234,13 +233,12 @@ class TwoLayerFCSNN(nn.Module):
         if x.dim() != 4 or x.size(1) != 1:
             raise ValueError(f"Expected input shape [B,1,61,750], got {tuple(x.shape)}")
         x_tb = x.squeeze(1).permute(2, 0, 1).contiguous()
-        logits_sum = None
+        spike_sum = None
         for t in range(x_tb.size(0)):
-            h = self.fc1(x_tb[t])
-            spk = self.neuron(h)
-            logits_t = self.fc2(spk)
-            logits_sum = logits_t if logits_sum is None else logits_sum + logits_t
-        return logits_sum / x_tb.size(0)
+            current = self.fc(x_tb[t])
+            spike_t = self.neuron(current)
+            spike_sum = spike_t if spike_sum is None else spike_sum + spike_t
+        return spike_sum / x_tb.size(0)
 
 
 def reset_net(model: nn.Module):
@@ -324,10 +322,9 @@ def train_one_fold(args, fold_idx: int, neuron_type: str, train_path: str, test_
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=args.drop_last)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
 
-    model = TwoLayerFCSNN(
+    model = SingleLayerFCSNN(
         neuron_type=neuron_type,
         input_dim=args.input_dim,
-        hidden_dim=args.hidden_dim,
         num_classes=args.num_classes,
         tau=args.tau,
         decay_input=args.decay_input,
@@ -382,7 +379,7 @@ def train_one_fold(args, fold_idx: int, neuron_type: str, train_path: str, test_
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Single-file EEG segment LIF vs LSLIF two-layer FC SNN experiment")
+    parser = argparse.ArgumentParser(description="Single-file EEG segment LIF vs LSLIF single-layer FC SNN experiment")
     parser.add_argument("--train-dir", default=DEFAULT_TRAIN_DIR)
     parser.add_argument("--test-dir", default=DEFAULT_TEST_DIR)
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
@@ -394,7 +391,7 @@ def parse_args():
     parser.add_argument("--weight-decay", type=float, default=1e-3)
     parser.add_argument("--step-size", type=int, default=50)
     parser.add_argument("--gamma", type=float, default=0.9)
-    parser.add_argument("--hidden-dim", type=int, default=128)
+    parser.add_argument("--hidden-dim", type=int, default=128, help="Deprecated; ignored because the model is now single-layer FC.")
     parser.add_argument("--input-dim", type=int, default=61)
     parser.add_argument("--num-classes", type=int, default=2)
     parser.add_argument("--tau", type=float, default=2.0)
