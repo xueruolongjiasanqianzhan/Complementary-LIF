@@ -23,20 +23,23 @@ temporal conv → BN → depthwise spatial conv → BN → LIF/LSLIF
       → classifier current → 输出神经元/时间聚合
 ```
 
-## 2. 推荐的 Spiking-EEGNet 结构
+## 2. 推荐的 Tiny Spiking-EEGNet 结构
 
-以 EEGNet-8,2 为例，保持标准 EEGNet 的归纳偏置，只替换非线性并显式展开状态：
+为了避免完整 EEGNet 在当前二分类数据上过快达到性能上限，默认采用 EEGNet-like
+的 tiny 结构，仅保留最关键的时间卷积与跨电极空间卷积：
 
-1. `Conv2d(1, F1, (1, K1), bias=False)`：时间卷积，权重跨 SNN 步共享；
+1. `Conv2d(1, F1=4, (1, K1), bias=False)`：时间卷积，权重跨 SNN 步共享；
 2. `BatchNorm2d(F1)`；
-3. `Conv2d(F1, F1*D, (C, 1), groups=F1, bias=False)`：跨电极的 depthwise
+3. `Conv2d(F1, F1, (C, 1), groups=F1, bias=False)`：跨电极的 depthwise
    spatial convolution；
-4. `BatchNorm2d(F1*D) → LIF/LSLIF → AvgPool2d((1, P1)) → Dropout`；
-5. `Conv2d(F1*D, F1*D, (1, K2), groups=F1*D, bias=False)` 加
-   `Conv2d(F1*D, F2, 1, bias=False)`，即 separable temporal convolution；
-6. `BatchNorm2d(F2) → LIF/LSLIF → AvgPool2d((1, P2)) → Dropout`；
-7. 对 chunk 内剩余宽度做均值，得到 `[B, F2]`，再经 `Linear(F2, classes)`
-   产生每一步的分类电流。
+4. `BatchNorm2d(F1) → LIF/LSLIF → AvgPool2d((1, P1)) → Dropout`；
+5. 对 chunk 内剩余宽度做均值，得到 `[B, 4]`；30 个 chunk 特征求均值后，
+   再经普通 `Linear(4, classes)` 分类。
+
+该结构只有两个卷积层、一个脉冲层和一个线性分类层，使跨 chunk 持续的神经元
+状态成为主要的时序信息通路。旧的第二个 separable temporal convolution 和第二个
+脉冲层仍可通过 `--architecture full` 恢复，用于容量消融；默认使用
+`--architecture tiny`。
 
 第一版分类头保持非脉冲：先对各步脉冲特征求均值，再送入普通 `nn.Linear`
 分类器：

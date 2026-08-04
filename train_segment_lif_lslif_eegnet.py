@@ -189,11 +189,12 @@ class EEGSegmentDataset(Dataset):
 
 
 class SpikingEEGNet(nn.Module):
-    """EEGNet-8,2 风格的 chunk-based SNN，最终分类器为普通 Linear。"""
+    """Chunk-based EEGNet-like SNN，支持 tiny 和 full 两种容量。"""
 
     def __init__(self, neuron_type, channels=61, num_classes=2, chunk_size=25,
-                 f1=8, depth_multiplier=2, f2=16, temporal_kernel=15,
-                 separable_kernel=7, dropout=0.25, **neuron_kwargs):
+                 architecture="tiny", f1=4, depth_multiplier=1, f2=16,
+                 temporal_kernel=15, separable_kernel=7, dropout=0.25,
+                 **neuron_kwargs):
         super().__init__()
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
@@ -201,6 +202,9 @@ class SpikingEEGNet(nn.Module):
             raise ValueError("temporal_kernel must be a positive odd number")
         if separable_kernel <= 0 or separable_kernel % 2 == 0:
             raise ValueError("separable_kernel must be a positive odd number")
+        if architecture not in {"tiny", "full"}:
+            raise ValueError("architecture must be 'tiny' or 'full'")
+        self.architecture = architecture
         self.chunk_size = int(chunk_size)
         self.channels = int(channels)
         spatial_filters = int(f1) * int(depth_multiplier)
@@ -216,23 +220,30 @@ class SpikingEEGNet(nn.Module):
         self.neuron1 = build_neuron(neuron_type, **neuron_kwargs)
         self.pool1 = nn.AvgPool2d((1, 4))
         self.dropout1 = nn.Dropout(dropout)
-        self.separable = nn.Sequential(
-            nn.Conv2d(spatial_filters, spatial_filters, (1, separable_kernel),
-                      padding=(0, separable_kernel // 2), groups=spatial_filters, bias=False),
-            nn.Conv2d(spatial_filters, f2, 1, bias=False),
-            nn.BatchNorm2d(f2),
-        )
-        self.neuron2 = build_neuron(neuron_type, **neuron_kwargs)
-        self.pool2 = nn.AdaptiveAvgPool2d((1, 1))
+        if architecture == "full":
+            self.separable = nn.Sequential(
+                nn.Conv2d(spatial_filters, spatial_filters, (1, separable_kernel),
+                          padding=(0, separable_kernel // 2), groups=spatial_filters, bias=False),
+                nn.Conv2d(spatial_filters, f2, 1, bias=False),
+                nn.BatchNorm2d(f2),
+            )
+            self.neuron2 = build_neuron(neuron_type, **neuron_kwargs)
+            classifier_features = f2
+        else:
+            self.separable = None
+            self.neuron2 = None
+            classifier_features = spatial_filters
+        self.output_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.dropout2 = nn.Dropout(dropout)
-        self.classifier = nn.Linear(f2, num_classes)
+        self.classifier = nn.Linear(classifier_features, num_classes)
 
     def _step(self, chunk):
         x = self.temporal(chunk)
         x = self.spatial(x)
         x = self.dropout1(self.pool1(self.neuron1(x)))
-        x = self.separable(x)
-        x = self.dropout2(self.pool2(self.neuron2(x)))
+        if self.separable is not None:
+            x = self.neuron2(self.separable(x))
+        x = self.dropout2(self.output_pool(x))
         return torch.flatten(x, 1)
 
     def forward(self, x):
@@ -337,6 +348,7 @@ def train_one_fold(args, fold_idx, neuron_type, train_path, test_path, device) -
                              shuffle=False, drop_last=False)
     model = SpikingEEGNet(
         neuron_type=neuron_type, channels=args.channels, num_classes=args.num_classes,
+        architecture=args.architecture,
         chunk_size=args.chunk_size, f1=args.f1, depth_multiplier=args.depth_multiplier,
         f2=args.f2, temporal_kernel=args.temporal_kernel,
         separable_kernel=args.separable_kernel, dropout=args.dropout, tau=args.tau,
@@ -394,8 +406,10 @@ def parse_args():
     parser.add_argument("--channels", type=int, default=61)
     parser.add_argument("--num-classes", type=int, default=2)
     parser.add_argument("--chunk-size", type=int, default=25)
-    parser.add_argument("--f1", type=int, default=8)
-    parser.add_argument("--depth-multiplier", type=int, default=2)
+    parser.add_argument("--architecture", default="tiny", choices=["tiny", "full"],
+                        help="tiny removes the second separable-convolution/spiking block")
+    parser.add_argument("--f1", type=int, default=4)
+    parser.add_argument("--depth-multiplier", type=int, default=1)
     parser.add_argument("--f2", type=int, default=16)
     parser.add_argument("--temporal-kernel", type=int, default=15)
     parser.add_argument("--separable-kernel", type=int, default=7)
