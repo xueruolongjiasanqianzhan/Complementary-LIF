@@ -10,8 +10,16 @@ import ast
 import importlib.util
 import json
 import random
+import sys
 from pathlib import Path
 
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    # Executing ``python analysis/analyze_temporal_gradient.py`` otherwise puts
+    # only ``analysis/`` on sys.path, so project modules such as ``utils`` and
+    # ``models`` cannot be imported.
+    sys.path.insert(0, str(REPOSITORY_ROOT))
 
 RUNTIME_MODULES = ("torch", "torchvision", "spikingjelly", "numpy", "matplotlib")
 

@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+import subprocess
+import sys
 from pathlib import Path
 
 from analysis.analyze_temporal_gradient import (
@@ -43,6 +45,15 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         self.assertEqual(args.layer, "layer3.6")
         self.assertEqual(args.checkpoint_name, "checkpoint_max.pth")
         self.assertEqual(args.max_neurons, 512)
+
+    def test_script_can_start_outside_repository(self):
+        script = Path(__file__).with_name("analyze_temporal_gradient.py").resolve()
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [sys.executable, str(script), "--help"], cwd=directory,
+                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--ls-run", result.stdout)
 
 
 if __name__ == "__main__":
