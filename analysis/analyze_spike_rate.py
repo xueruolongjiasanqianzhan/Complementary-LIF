@@ -315,15 +315,11 @@ def _write_plots(
         raise ValueError("--dpi must be at least 72.")
 
     scopes = ("Global", "Shallow", "Middle", "Deep")
-    layer_labels = ("All neuron outputs", layers[0], layers[1], layers[2])
     ls_values = [ls_rates[scope] for scope in scopes]
     baseline_values = [baseline_rates[scope] for scope in scopes]
     x = list(range(len(scopes)))
     bar_width = 0.34
     ls_model, baseline_model = groups[0][1].model_name, groups[1][1].model_name
-    ls_epochs = f"{groups[0][3][0].epoch}–{groups[0][3][-1].epoch}"
-    baseline_epochs = f"{groups[1][3][0].epoch}–{groups[1][3][-1].epoch}"
-
     with plt.rc_context({
         "font.family": "DejaVu Serif",
         "font.size": 11,
@@ -347,10 +343,10 @@ def _write_plots(
             label=f"Baseline: {baseline_model}", color="#F2A65A", edgecolor="#7C2D12", linewidth=0.7,
         )
         maximum = max(ls_values + baseline_values + [1e-6])
-        ax.set_ylim(0, maximum * 1.28)
+        ax.set_ylim(0, maximum * 1.30)
         ax.set_ylabel("Mean firing rate")
         ax.set_xticks(x)
-        ax.set_xticklabels([f"{scope}\n{layer}" for scope, layer in zip(scopes, layer_labels)])
+        ax.set_xticklabels(scopes)
         ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0, decimals=0))
         ax.grid(axis="y", color="#CBD5E1", linewidth=0.7, alpha=0.75)
         ax.set_axisbelow(True)
@@ -358,15 +354,11 @@ def _write_plots(
         ax.spines["right"].set_visible(False)
         ax.spines["left"].set_color("#475569")
         ax.spines["bottom"].set_color("#475569")
-        ax.set_title("Mean firing-rate comparison", fontweight="bold", pad=34)
-        ax.text(
-            0.5, 1.025,
-            f"Window around best observed accuracy  |  LS epochs {ls_epochs}  |  Baseline epochs {baseline_epochs}",
-            transform=ax.transAxes, ha="center", va="bottom", fontsize=9.5, color="#475569",
-        )
+        ax.set_title("Mean firing-rate comparison", fontweight="bold", pad=18)
         ax.legend(
-            loc="upper center", bbox_to_anchor=(0.5, 1.18), ncol=2,
-            frameon=False, handlelength=1.8, columnspacing=2.4,
+            loc="upper right", ncol=1, frameon=True, fancybox=False,
+            edgecolor="#94A3B8", facecolor="white", framealpha=0.95,
+            handlelength=1.8, borderpad=0.8, labelspacing=0.7,
         )
         ax.bar_label(ls_bars, labels=[f"{value:.2%}" for value in ls_values], padding=4, fontsize=9.5)
         ax.bar_label(
@@ -394,8 +386,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline-run", type=Path, required=True, help="non-LS experiment directory")
     parser.add_argument("--output-dir", type=Path, default=Path("spike_rate_comparison"))
     parser.add_argument("--window-size", type=int, default=5, help="odd number of epochs around the best observed accuracy")
-    parser.add_argument("--fig-width", type=float, default=10.0, help="figure width in inches")
-    parser.add_argument("--fig-height", type=float, default=6.0, help="figure height in inches")
+    parser.add_argument("--fig-width", type=float, default=14.0, help="figure width in inches")
+    parser.add_argument("--fig-height", type=float, default=8.0, help="figure height in inches")
     parser.add_argument("--dpi", type=int, default=300, help="PNG dots per inch; SVG remains vector-based")
     parser.add_argument("--shallow-layer")
     parser.add_argument("--middle-layer")

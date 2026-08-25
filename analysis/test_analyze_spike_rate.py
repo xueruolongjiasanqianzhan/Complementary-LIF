@@ -101,7 +101,9 @@ class AnalyzeSpikeRateTest(unittest.TestCase):
             png = (output / "mean_spike_rate_comparison.png").read_bytes()
             self.assertTrue(png.startswith(b"\x89PNG"))
             svg = (output / "mean_spike_rate_comparison.svg").read_text()
-            self.assertIn("layer1.0.relu1", svg)
+            self.assertIn("Mean firing-rate comparison", svg)
+            self.assertIn("Shallow", svg)
+            self.assertIn("LS: LSLIF", svg)
 
 
 if __name__ == "__main__":

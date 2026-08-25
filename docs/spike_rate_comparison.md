@@ -55,8 +55,8 @@ The output directory contains:
 
 - `mean_spike_rate_comparison.png`: grouped mean-rate bars for global,
   shallow, middle, and deep scopes. The high-resolution chart identifies the
-  compared neuron models, selected epoch windows, exact representative layer
-  names, and exact bar values;
+  compared neuron models and exact bar values; exact representative layer names
+  remain available in the CSV output without crowding the x-axis;
 - `mean_spike_rate_comparison.svg`: the same chart as a resolution-independent
   vector image. Prefer this file for papers, slides, or arbitrary resizing;
 - `spike_rate_summary.csv`: run metadata, selected epochs, representative
@@ -72,7 +72,7 @@ records. Conflicting duplicate records are rejected rather than overwritten.
 ## Changing image size
 
 Image size follows Matplotlib's standard `figure size × DPI` rule. The defaults
-are 10 × 6 inches at 300 DPI, producing an approximately 3000 × 1800 PNG. Set
+are 14 × 8 inches at 300 DPI, producing an approximately 4200 × 2400 PNG. Set
 the dimensions directly from the command line:
 
 ```bash
