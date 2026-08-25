@@ -48,7 +48,9 @@ be supplied together and must exist in both selected windows.
 The output directory contains:
 
 - `mean_spike_rate_comparison.png`: grouped mean-rate bars for global,
-  shallow, middle, and deep scopes;
+  shallow, middle, and deep scopes. The high-resolution chart identifies the
+  compared neuron models, selected epoch windows, exact representative layer
+  names, bar values, and LS-relative firing-rate changes;
 - `spike_rate_summary.csv`: run metadata, selected epochs, representative
   layers, and mean rates;
 - `spike_rate_comparison.csv`: LS-minus-baseline absolute and relative rate

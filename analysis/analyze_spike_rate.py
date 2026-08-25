@@ -297,63 +297,155 @@ def _write_csvs(
 
 
 FONT = {
-    "0": ("111", "101", "101", "101", "111"), "1": ("010", "110", "010", "010", "111"),
-    "2": ("111", "001", "111", "100", "111"), "3": ("111", "001", "111", "001", "111"),
-    "4": ("101", "101", "111", "001", "001"), "5": ("111", "100", "111", "001", "111"),
-    "6": ("111", "100", "111", "101", "111"), "7": ("111", "001", "010", "010", "010"),
-    "8": ("111", "101", "111", "101", "111"), "9": ("111", "101", "111", "001", "111"),
-    ".": ("000", "000", "000", "000", "010"), "%": ("101", "001", "010", "100", "101"),
-    "-": ("000", "000", "111", "000", "000"), " ": ("000",) * 5,
-    "G": ("111", "100", "101", "101", "111"), "S": ("111", "100", "111", "001", "111"),
-    "M": ("10001", "11011", "10101", "10001", "10001"), "D": ("110", "101", "101", "101", "110"),
-    "L": ("100", "100", "100", "100", "111"), "B": ("110", "101", "110", "101", "110"),
+    "A": ("01110", "10001", "11111", "10001", "10001"), "B": ("11110", "10001", "11110", "10001", "11110"),
+    "C": ("01111", "10000", "10000", "10000", "01111"), "D": ("11110", "10001", "10001", "10001", "11110"),
+    "E": ("11111", "10000", "11110", "10000", "11111"), "F": ("11111", "10000", "11110", "10000", "10000"),
+    "G": ("01111", "10000", "10111", "10001", "01111"), "H": ("10001", "10001", "11111", "10001", "10001"),
+    "I": ("11111", "00100", "00100", "00100", "11111"), "J": ("00111", "00010", "00010", "10010", "01100"),
+    "K": ("10001", "10010", "11100", "10010", "10001"), "L": ("10000", "10000", "10000", "10000", "11111"),
+    "M": ("10001", "11011", "10101", "10001", "10001"), "N": ("10001", "11001", "10101", "10011", "10001"),
+    "O": ("01110", "10001", "10001", "10001", "01110"), "P": ("11110", "10001", "11110", "10000", "10000"),
+    "Q": ("01110", "10001", "10101", "10010", "01101"), "R": ("11110", "10001", "11110", "10010", "10001"),
+    "S": ("01111", "10000", "01110", "00001", "11110"), "T": ("11111", "00100", "00100", "00100", "00100"),
+    "U": ("10001", "10001", "10001", "10001", "01110"), "V": ("10001", "10001", "10001", "01010", "00100"),
+    "W": ("10001", "10001", "10101", "11011", "10001"), "X": ("10001", "01010", "00100", "01010", "10001"),
+    "Y": ("10001", "01010", "00100", "00100", "00100"), "Z": ("11111", "00010", "00100", "01000", "11111"),
+    "0": ("01110", "10011", "10101", "11001", "01110"), "1": ("00100", "01100", "00100", "00100", "01110"),
+    "2": ("01110", "10001", "00010", "00100", "11111"), "3": ("11110", "00001", "00110", "00001", "11110"),
+    "4": ("00010", "00110", "01010", "11111", "00010"), "5": ("11111", "10000", "11110", "00001", "11110"),
+    "6": ("01111", "10000", "11110", "10001", "01110"), "7": ("11111", "00010", "00100", "01000", "01000"),
+    "8": ("01110", "10001", "01110", "10001", "01110"), "9": ("01110", "10001", "01111", "00001", "11110"),
+    ".": ("00000", "00000", "00000", "00000", "00100"), "%": ("11001", "11010", "00100", "01011", "10011"),
+    "-": ("00000", "00000", "11111", "00000", "00000"), "/": ("00001", "00010", "00100", "01000", "10000"),
+    "+": ("00000", "00100", "11111", "00100", "00000"), ":": ("00000", "00100", "00000", "00100", "00000"),
+    " ": ("00000",) * 5,
 }
 
 
-def _draw_text(pixels: list[list[tuple[int, int, int]]], x: int, y: int, value: str, scale: int = 2) -> None:
+def _set_pixel(pixels: bytearray, width: int, height: int, x: int, y: int, color: tuple[int, int, int]) -> None:
+    if 0 <= x < width and 0 <= y < height:
+        offset = (y * width + x) * 3
+        pixels[offset:offset + 3] = bytes(color)
+
+
+def _rectangle(
+    pixels: bytearray, width: int, height: int, x0: int, y0: int, x1: int, y1: int, color: tuple[int, int, int]
+) -> None:
+    row = bytes(color) * max(0, x1 - x0)
+    for y in range(max(0, y0), min(height, y1)):
+        start = (y * width + max(0, x0)) * 3
+        pixels[start:start + len(row)] = row
+
+
+def _text_width(value: str, scale: int) -> int:
+    return max(0, len(value) * 6 * scale - scale)
+
+
+def _draw_text(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    x: int,
+    y: int,
+    value: str,
+    scale: int = 3,
+    color: tuple[int, int, int] = (31, 41, 55),
+) -> None:
     for char in value.upper():
         glyph = FONT.get(char, FONT[" "])
         for row, bits in enumerate(glyph):
             for column, bit in enumerate(bits):
                 if bit == "1":
-                    for dy in range(scale):
-                        for dx in range(scale):
-                            yy, xx = y + row * scale + dy, x + column * scale + dx
-                            if 0 <= yy < len(pixels) and 0 <= xx < len(pixels[0]):
-                                pixels[yy][xx] = (30, 30, 30)
-        x += (len(glyph[0]) + 1) * scale
+                    _rectangle(
+                        pixels, width, height,
+                        x + column * scale, y + row * scale,
+                        x + (column + 1) * scale, y + (row + 1) * scale,
+                        color,
+                    )
+        x += 6 * scale
 
 
-def _write_png(path: Path, ls_rates: dict[str, float], baseline_rates: dict[str, float]) -> None:
-    width, height = 920, 560
-    pixels = [[(255, 255, 255) for _ in range(width)] for _ in range(height)]
+def _centered_text(
+    pixels: bytearray, width: int, height: int, center: int, y: int, value: str, scale: int, color=(31, 41, 55)
+) -> None:
+    _draw_text(pixels, width, height, center - _text_width(value, scale) // 2, y, value, scale, color)
+
+
+def _write_png(
+    path: Path,
+    ls_rates: dict[str, float],
+    baseline_rates: dict[str, float],
+    groups: list[tuple[str, RunData, EpochRecord, list[EpochRecord], dict[str, float]]],
+    layers: tuple[str, str, str],
+) -> None:
+    width, height = 1800, 1100
+    pixels = bytearray([248, 250, 252]) * (width * height)
     scopes = ("Global", "Shallow", "Middle", "Deep")
-    maximum = max(max(ls_rates.values()), max(baseline_rates.values()), 1e-6) * 1.18
-    left, top, bottom = 80, 55, 455
-    for y in range(top, bottom + 1):
-        pixels[y][left] = (70, 70, 70)
-    for x in range(left, width - 30):
-        pixels[bottom][x] = (70, 70, 70)
-    group_width = (width - left - 50) // 4
-    colors = ((60, 126, 210), (235, 133, 54))
+    layer_labels = ("ALL NEURON OUTPUTS", layers[0], layers[1], layers[2])
+    maximum_value = max(max(ls_rates.values()), max(baseline_rates.values()), 1e-6)
+    tick_step = 0.02 if maximum_value <= 0.12 else 0.05
+    axis_maximum = math.ceil((maximum_value * 1.22) / tick_step) * tick_step
+    left, right, top, bottom = 170, 1730, 250, 820
+    plot_height = bottom - top
+    grid_color, axis_color = (214, 222, 232), (71, 85, 105)
+    tick = 0.0
+    while tick <= axis_maximum + 1e-12:
+        y = bottom - round(plot_height * tick / axis_maximum)
+        _rectangle(pixels, width, height, left, y, right, y + 2, grid_color)
+        label = f"{tick * 100:.0f}%"
+        _draw_text(pixels, width, height, left - _text_width(label, 3) - 24, y - 8, label, 3, axis_color)
+        tick += tick_step
+    _rectangle(pixels, width, height, left - 3, top, left, bottom + 3, axis_color)
+    _rectangle(pixels, width, height, left, bottom, right, bottom + 3, axis_color)
+
+    ls_model, baseline_model = groups[0][1].model_name, groups[1][1].model_name
+    ls_epochs = f"{groups[0][3][0].epoch}-{groups[0][3][-1].epoch}"
+    baseline_epochs = f"{groups[1][3][0].epoch}-{groups[1][3][-1].epoch}"
+    _centered_text(pixels, width, height, width // 2, 52, "MEAN FIRING RATE COMPARISON", 6, (15, 23, 42))
+    _centered_text(
+        pixels, width, height, width // 2, 105,
+        "WINDOW MEAN AROUND EACH MODELS BEST OBSERVED ACCURACY", 3, (71, 85, 105),
+    )
+    _centered_text(
+        pixels, width, height, width // 2, 145,
+        f"LS {ls_model} EPOCHS {ls_epochs}   BASELINE {baseline_model} EPOCHS {baseline_epochs}", 3, (71, 85, 105),
+    )
+
+    colors = ((37, 99, 235), (249, 115, 22))
+    group_width = (right - left) // 4
+    bar_width, bar_gap = 100, 28
     for index, scope in enumerate(scopes):
         center = left + group_width * index + group_width // 2
-        for offset, rate, color in ((-34, ls_rates[scope], colors[0]), (8, baseline_rates[scope], colors[1])):
-            bar_height = round((bottom - top) * rate / maximum)
-            x0, x1 = center + offset, center + offset + 28
+        rates = (ls_rates[scope], baseline_rates[scope])
+        x_positions = (center - bar_gap // 2 - bar_width, center + bar_gap // 2)
+        for x0, rate, color in zip(x_positions, rates, colors):
+            bar_height = round(plot_height * rate / axis_maximum)
             y0 = bottom - bar_height
-            for y in range(y0, bottom):
-                for x in range(x0, x1):
-                    pixels[y][x] = color
-            _draw_text(pixels, x0 - 8, max(15, y0 - 18), f"{rate * 100:.1f}%", 2)
-        _draw_text(pixels, center - 10, bottom + 16, scope[0], 3)
-    _draw_text(pixels, 110, 505, "LS", 3)
-    for y in range(500, 520):
-        for x in range(80, 102): pixels[y][x] = colors[0]
-    _draw_text(pixels, 225, 505, "B", 3)
-    for y in range(500, 520):
-        for x in range(195, 217): pixels[y][x] = colors[1]
-    raw = b"".join(b"\x00" + bytes(channel for pixel in row for channel in pixel) for row in pixels)
+            _rectangle(pixels, width, height, x0, y0, x0 + bar_width, bottom, color)
+            value = f"{rate * 100:.2f}%"
+            _centered_text(pixels, width, height, x0 + bar_width // 2, y0 - 34, value, 3, (15, 23, 42))
+        _centered_text(pixels, width, height, center, 850, scope.upper(), 4, (15, 23, 42))
+        _centered_text(pixels, width, height, center, 890, layer_labels[index].upper(), 2, (71, 85, 105))
+        difference = (ls_rates[scope] - baseline_rates[scope]) / baseline_rates[scope] if baseline_rates[scope] else float("nan")
+        change = "N/A" if math.isnan(difference) else f"LS CHANGE {difference * 100:+.1f}%"
+        change_color = (22, 101, 52) if difference <= 0 else (185, 28, 28)
+        _centered_text(pixels, width, height, center, 925, change, 2, change_color)
+
+    legend_y = 1005
+    legend_items = ((f"LS / {ls_model}", colors[0]), (f"BASELINE / {baseline_model}", colors[1]))
+    legend_widths = [_text_width(label, 3) + 62 for label, _ in legend_items]
+    legend_x = width // 2 - (sum(legend_widths) + 70) // 2
+    for item_width, (label, color) in zip(legend_widths, legend_items):
+        _rectangle(pixels, width, height, legend_x, legend_y - 5, legend_x + 38, legend_y + 24, color)
+        _draw_text(pixels, width, height, legend_x + 54, legend_y, label, 3, (31, 41, 55))
+        legend_x += item_width + 70
+
+    rows = []
+    row_bytes = width * 3
+    for y in range(height):
+        start = y * row_bytes
+        rows.append(b"\x00" + bytes(pixels[start:start + row_bytes]))
+    raw = b"".join(rows)
     def chunk(kind: bytes, data: bytes) -> bytes:
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
     png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
@@ -402,7 +494,7 @@ def main(argv: list[str] | None = None) -> int:
             ("Baseline", baseline_run, baseline_best, baseline_window, baseline_rates),
         ]
         _write_csvs(args.output_dir, groups, layers)
-        _write_png(args.output_dir / "mean_spike_rate_comparison.png", ls_rates, baseline_rates)
+        _write_png(args.output_dir / "mean_spike_rate_comparison.png", ls_rates, baseline_rates, groups, layers)
     except (OSError, ValueError, json.JSONDecodeError, csv.Error) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

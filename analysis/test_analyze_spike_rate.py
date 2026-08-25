@@ -1,5 +1,6 @@
 import csv
 import json
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -94,7 +95,9 @@ class AnalyzeSpikeRateTest(unittest.TestCase):
             self.assertTrue((output / "mean_spike_rate_comparison.png").is_file())
             self.assertTrue((output / "spike_rate_summary.csv").is_file())
             self.assertTrue((output / "spike_rate_comparison.csv").is_file())
-            self.assertTrue((output / "mean_spike_rate_comparison.png").read_bytes().startswith(b"\x89PNG"))
+            png = (output / "mean_spike_rate_comparison.png").read_bytes()
+            self.assertTrue(png.startswith(b"\x89PNG"))
+            self.assertEqual(struct.unpack(">II", png[16:24]), (1800, 1100))
 
 
 if __name__ == "__main__":
