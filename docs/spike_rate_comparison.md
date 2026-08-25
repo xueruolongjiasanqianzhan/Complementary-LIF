@@ -3,6 +3,8 @@
 `analysis/analyze_spike_rate.py` compares two training run directories around
 each run's best **observed** test-accuracy epoch. It is dependency-free and
 reads the existing `metrics.csv`, `args.txt`, and `run_summary.json` files.
+Both historical `OrderedDict([('layer', rate), ...])` records and newer
+`OrderedDict({'layer': rate})`/plain-dictionary records are supported.
 
 ## Usage
 

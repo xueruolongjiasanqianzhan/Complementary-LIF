@@ -29,7 +29,12 @@ EPOCH_RE = re.compile(
     r"test_spike_rate_global=(?P<global_rate>[-+0-9.eE]+),\s*"
     r"escape_time=.*?(?=(?:\r?\n|$))",
 )
-LAYERS_RE = re.compile(r"test_spike_rate_layers=OrderedDict\((\{.*?\})\)")
+LAYERS_RE = re.compile(
+    r"^test_spike_rate_layers=(?:OrderedDict\()?"
+    r"(?P<payload>\{.*\}|\[.*\])"
+    r"\)?\s*$",
+    re.MULTILINE,
+)
 
 
 @dataclass(frozen=True)
@@ -100,12 +105,26 @@ def _parse_layers(segment: str, path: Path, epoch: int) -> dict[str, float]:
     if not match:
         return {}
     try:
-        value = ast.literal_eval(match.group(1))
+        value = ast.literal_eval(match.group("payload"))
     except (SyntaxError, ValueError) as exc:
         raise ValueError(f"Could not parse layer firing rates for epoch {epoch} in {path}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise ValueError(f"Layer firing rates for epoch {epoch} in {path} are not a dictionary.")
-    return {str(name): float(rate) for name, rate in value.items()}
+    if isinstance(value, dict):
+        items = value.items()
+    elif isinstance(value, list):
+        try:
+            items = dict(value).items()
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"OrderedDict entries for epoch {epoch} in {path} are not valid name/rate pairs."
+            ) from exc
+    else:
+        raise ValueError(
+            f"Layer firing rates for epoch {epoch} in {path} are neither a dictionary nor an OrderedDict entry list."
+        )
+    try:
+        return {str(name): float(rate) for name, rate in items}
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Layer firing rates for epoch {epoch} in {path} contain a non-numeric rate.") from exc
 
 
 def _read_args_txt(path: Path, warnings: list[str]) -> dict[int, EpochRecord]:
