@@ -1,6 +1,6 @@
 import csv
+import importlib.util
 import json
-import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +13,7 @@ LAYERS = {
     "layer3.0.relu1": 0.10,
     "layer4.1.relu2": 0.15,
 }
+HAS_MATPLOTLIB = importlib.util.find_spec("matplotlib") is not None
 
 
 def write_run(
@@ -80,6 +81,7 @@ class AnalyzeSpikeRateTest(unittest.TestCase):
             self.assertEqual([record.epoch for record in window], [51, 52, 53])
             self.assertTrue(any("Historical max_test_acc" in warning for warning in run.warnings))
 
+    @unittest.skipUnless(HAS_MATPLOTLIB, "matplotlib is not installed")
     def test_cli_writes_comparison_outputs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -93,11 +95,13 @@ class AnalyzeSpikeRateTest(unittest.TestCase):
             ])
             self.assertEqual(result, 0)
             self.assertTrue((output / "mean_spike_rate_comparison.png").is_file())
+            self.assertTrue((output / "mean_spike_rate_comparison.svg").is_file())
             self.assertTrue((output / "spike_rate_summary.csv").is_file())
             self.assertTrue((output / "spike_rate_comparison.csv").is_file())
             png = (output / "mean_spike_rate_comparison.png").read_bytes()
             self.assertTrue(png.startswith(b"\x89PNG"))
-            self.assertEqual(struct.unpack(">II", png[16:24]), (1800, 1100))
+            svg = (output / "mean_spike_rate_comparison.svg").read_text()
+            self.assertIn("layer1.0.relu1", svg)
 
 
 if __name__ == "__main__":

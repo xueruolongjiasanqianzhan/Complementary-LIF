@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Compare firing rates around the best observed epochs of two training runs.
 
-The script intentionally uses only the Python standard library.  A run directory
-may contain a resumed/partial ``metrics.csv`` and ``args.txt``; only epochs that
-are actually present in that directory are considered.
+A run directory may contain a resumed/partial ``metrics.csv`` and ``args.txt``;
+only epochs that are actually present in that directory are considered. Plotting
+uses Matplotlib for publication-quality PNG and SVG output.
 """
 
 from __future__ import annotations
@@ -11,12 +11,11 @@ from __future__ import annotations
 import argparse
 import ast
 import csv
+import importlib.util
 import json
 import math
 import re
-import struct
 import sys
-import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -296,161 +295,87 @@ def _write_csvs(
             writer.writerow([scope.lower(), scope_layers[scope], ls_rates[scope], baseline_rates[scope], difference, relative])
 
 
-FONT = {
-    "A": ("01110", "10001", "11111", "10001", "10001"), "B": ("11110", "10001", "11110", "10001", "11110"),
-    "C": ("01111", "10000", "10000", "10000", "01111"), "D": ("11110", "10001", "10001", "10001", "11110"),
-    "E": ("11111", "10000", "11110", "10000", "11111"), "F": ("11111", "10000", "11110", "10000", "10000"),
-    "G": ("01111", "10000", "10111", "10001", "01111"), "H": ("10001", "10001", "11111", "10001", "10001"),
-    "I": ("11111", "00100", "00100", "00100", "11111"), "J": ("00111", "00010", "00010", "10010", "01100"),
-    "K": ("10001", "10010", "11100", "10010", "10001"), "L": ("10000", "10000", "10000", "10000", "11111"),
-    "M": ("10001", "11011", "10101", "10001", "10001"), "N": ("10001", "11001", "10101", "10011", "10001"),
-    "O": ("01110", "10001", "10001", "10001", "01110"), "P": ("11110", "10001", "11110", "10000", "10000"),
-    "Q": ("01110", "10001", "10101", "10010", "01101"), "R": ("11110", "10001", "11110", "10010", "10001"),
-    "S": ("01111", "10000", "01110", "00001", "11110"), "T": ("11111", "00100", "00100", "00100", "00100"),
-    "U": ("10001", "10001", "10001", "10001", "01110"), "V": ("10001", "10001", "10001", "01010", "00100"),
-    "W": ("10001", "10001", "10101", "11011", "10001"), "X": ("10001", "01010", "00100", "01010", "10001"),
-    "Y": ("10001", "01010", "00100", "00100", "00100"), "Z": ("11111", "00010", "00100", "01000", "11111"),
-    "0": ("01110", "10011", "10101", "11001", "01110"), "1": ("00100", "01100", "00100", "00100", "01110"),
-    "2": ("01110", "10001", "00010", "00100", "11111"), "3": ("11110", "00001", "00110", "00001", "11110"),
-    "4": ("00010", "00110", "01010", "11111", "00010"), "5": ("11111", "10000", "11110", "00001", "11110"),
-    "6": ("01111", "10000", "11110", "10001", "01110"), "7": ("11111", "00010", "00100", "01000", "01000"),
-    "8": ("01110", "10001", "01110", "10001", "01110"), "9": ("01110", "10001", "01111", "00001", "11110"),
-    ".": ("00000", "00000", "00000", "00000", "00100"), "%": ("11001", "11010", "00100", "01011", "10011"),
-    "-": ("00000", "00000", "11111", "00000", "00000"), "/": ("00001", "00010", "00100", "01000", "10000"),
-    "+": ("00000", "00100", "11111", "00100", "00000"), ":": ("00000", "00100", "00000", "00100", "00000"),
-    " ": ("00000",) * 5,
-}
-
-
-def _set_pixel(pixels: bytearray, width: int, height: int, x: int, y: int, color: tuple[int, int, int]) -> None:
-    if 0 <= x < width and 0 <= y < height:
-        offset = (y * width + x) * 3
-        pixels[offset:offset + 3] = bytes(color)
-
-
-def _rectangle(
-    pixels: bytearray, width: int, height: int, x0: int, y0: int, x1: int, y1: int, color: tuple[int, int, int]
-) -> None:
-    row = bytes(color) * max(0, x1 - x0)
-    for y in range(max(0, y0), min(height, y1)):
-        start = (y * width + max(0, x0)) * 3
-        pixels[start:start + len(row)] = row
-
-
-def _text_width(value: str, scale: int) -> int:
-    return max(0, len(value) * 6 * scale - scale)
-
-
-def _draw_text(
-    pixels: bytearray,
-    width: int,
-    height: int,
-    x: int,
-    y: int,
-    value: str,
-    scale: int = 3,
-    color: tuple[int, int, int] = (31, 41, 55),
-) -> None:
-    for char in value.upper():
-        glyph = FONT.get(char, FONT[" "])
-        for row, bits in enumerate(glyph):
-            for column, bit in enumerate(bits):
-                if bit == "1":
-                    _rectangle(
-                        pixels, width, height,
-                        x + column * scale, y + row * scale,
-                        x + (column + 1) * scale, y + (row + 1) * scale,
-                        color,
-                    )
-        x += 6 * scale
-
-
-def _centered_text(
-    pixels: bytearray, width: int, height: int, center: int, y: int, value: str, scale: int, color=(31, 41, 55)
-) -> None:
-    _draw_text(pixels, width, height, center - _text_width(value, scale) // 2, y, value, scale, color)
-
-
-def _write_png(
-    path: Path,
+def _write_plots(
+    output_dir: Path,
     ls_rates: dict[str, float],
     baseline_rates: dict[str, float],
     groups: list[tuple[str, RunData, EpochRecord, list[EpochRecord], dict[str, float]]],
     layers: tuple[str, str, str],
+    fig_width: float,
+    fig_height: float,
+    dpi: int,
 ) -> None:
-    width, height = 1800, 1100
-    pixels = bytearray([248, 250, 252]) * (width * height)
+    if importlib.util.find_spec("matplotlib") is None:
+        raise RuntimeError("Plotting requires matplotlib. Install it with: python -m pip install -r analysis/requirements.txt")
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import PercentFormatter
+    if fig_width <= 0 or fig_height <= 0:
+        raise ValueError("--fig-width and --fig-height must be positive.")
+    if dpi < 72:
+        raise ValueError("--dpi must be at least 72.")
+
     scopes = ("Global", "Shallow", "Middle", "Deep")
-    layer_labels = ("ALL NEURON OUTPUTS", layers[0], layers[1], layers[2])
-    maximum_value = max(max(ls_rates.values()), max(baseline_rates.values()), 1e-6)
-    tick_step = 0.02 if maximum_value <= 0.12 else 0.05
-    axis_maximum = math.ceil((maximum_value * 1.22) / tick_step) * tick_step
-    left, right, top, bottom = 170, 1730, 250, 820
-    plot_height = bottom - top
-    grid_color, axis_color = (214, 222, 232), (71, 85, 105)
-    tick = 0.0
-    while tick <= axis_maximum + 1e-12:
-        y = bottom - round(plot_height * tick / axis_maximum)
-        _rectangle(pixels, width, height, left, y, right, y + 2, grid_color)
-        label = f"{tick * 100:.0f}%"
-        _draw_text(pixels, width, height, left - _text_width(label, 3) - 24, y - 8, label, 3, axis_color)
-        tick += tick_step
-    _rectangle(pixels, width, height, left - 3, top, left, bottom + 3, axis_color)
-    _rectangle(pixels, width, height, left, bottom, right, bottom + 3, axis_color)
-
+    layer_labels = ("All neuron outputs", layers[0], layers[1], layers[2])
+    ls_values = [ls_rates[scope] for scope in scopes]
+    baseline_values = [baseline_rates[scope] for scope in scopes]
+    x = list(range(len(scopes)))
+    bar_width = 0.34
     ls_model, baseline_model = groups[0][1].model_name, groups[1][1].model_name
-    ls_epochs = f"{groups[0][3][0].epoch}-{groups[0][3][-1].epoch}"
-    baseline_epochs = f"{groups[1][3][0].epoch}-{groups[1][3][-1].epoch}"
-    _centered_text(pixels, width, height, width // 2, 52, "MEAN FIRING RATE COMPARISON", 6, (15, 23, 42))
-    _centered_text(
-        pixels, width, height, width // 2, 105,
-        "WINDOW MEAN AROUND EACH MODELS BEST OBSERVED ACCURACY", 3, (71, 85, 105),
-    )
-    _centered_text(
-        pixels, width, height, width // 2, 145,
-        f"LS {ls_model} EPOCHS {ls_epochs}   BASELINE {baseline_model} EPOCHS {baseline_epochs}", 3, (71, 85, 105),
-    )
+    ls_epochs = f"{groups[0][3][0].epoch}–{groups[0][3][-1].epoch}"
+    baseline_epochs = f"{groups[1][3][0].epoch}–{groups[1][3][-1].epoch}"
 
-    colors = ((37, 99, 235), (249, 115, 22))
-    group_width = (right - left) // 4
-    bar_width, bar_gap = 100, 28
-    for index, scope in enumerate(scopes):
-        center = left + group_width * index + group_width // 2
-        rates = (ls_rates[scope], baseline_rates[scope])
-        x_positions = (center - bar_gap // 2 - bar_width, center + bar_gap // 2)
-        for x0, rate, color in zip(x_positions, rates, colors):
-            bar_height = round(plot_height * rate / axis_maximum)
-            y0 = bottom - bar_height
-            _rectangle(pixels, width, height, x0, y0, x0 + bar_width, bottom, color)
-            value = f"{rate * 100:.2f}%"
-            _centered_text(pixels, width, height, x0 + bar_width // 2, y0 - 34, value, 3, (15, 23, 42))
-        _centered_text(pixels, width, height, center, 850, scope.upper(), 4, (15, 23, 42))
-        _centered_text(pixels, width, height, center, 890, layer_labels[index].upper(), 2, (71, 85, 105))
-        difference = (ls_rates[scope] - baseline_rates[scope]) / baseline_rates[scope] if baseline_rates[scope] else float("nan")
-        change = "N/A" if math.isnan(difference) else f"LS CHANGE {difference * 100:+.1f}%"
-        change_color = (22, 101, 52) if difference <= 0 else (185, 28, 28)
-        _centered_text(pixels, width, height, center, 925, change, 2, change_color)
-
-    legend_y = 1005
-    legend_items = ((f"LS / {ls_model}", colors[0]), (f"BASELINE / {baseline_model}", colors[1]))
-    legend_widths = [_text_width(label, 3) + 62 for label, _ in legend_items]
-    legend_x = width // 2 - (sum(legend_widths) + 70) // 2
-    for item_width, (label, color) in zip(legend_widths, legend_items):
-        _rectangle(pixels, width, height, legend_x, legend_y - 5, legend_x + 38, legend_y + 24, color)
-        _draw_text(pixels, width, height, legend_x + 54, legend_y, label, 3, (31, 41, 55))
-        legend_x += item_width + 70
-
-    rows = []
-    row_bytes = width * 3
-    for y in range(height):
-        start = y * row_bytes
-        rows.append(b"\x00" + bytes(pixels[start:start + row_bytes]))
-    raw = b"".join(rows)
-    def chunk(kind: bytes, data: bytes) -> bytes:
-        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
-    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-    png += chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b"")
-    path.write_bytes(png)
+    with plt.rc_context({
+        "font.family": "DejaVu Serif",
+        "font.size": 11,
+        "axes.labelsize": 12,
+        "axes.titlesize": 15,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "legend.fontsize": 11,
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "savefig.facecolor": "white",
+        "svg.fonttype": "none",
+    }):
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height), constrained_layout=True)
+        ls_bars = ax.bar(
+            [value - bar_width / 2 for value in x], ls_values, bar_width,
+            label=f"LS: {ls_model}", color="#4C78A8", edgecolor="#334155", linewidth=0.7,
+        )
+        baseline_bars = ax.bar(
+            [value + bar_width / 2 for value in x], baseline_values, bar_width,
+            label=f"Baseline: {baseline_model}", color="#F2A65A", edgecolor="#7C2D12", linewidth=0.7,
+        )
+        maximum = max(ls_values + baseline_values + [1e-6])
+        ax.set_ylim(0, maximum * 1.28)
+        ax.set_ylabel("Mean firing rate")
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{scope}\n{layer}" for scope, layer in zip(scopes, layer_labels)])
+        ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0, decimals=0))
+        ax.grid(axis="y", color="#CBD5E1", linewidth=0.7, alpha=0.75)
+        ax.set_axisbelow(True)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_color("#475569")
+        ax.spines["bottom"].set_color("#475569")
+        ax.set_title("Mean firing-rate comparison", fontweight="bold", pad=34)
+        ax.text(
+            0.5, 1.025,
+            f"Window around best observed accuracy  |  LS epochs {ls_epochs}  |  Baseline epochs {baseline_epochs}",
+            transform=ax.transAxes, ha="center", va="bottom", fontsize=9.5, color="#475569",
+        )
+        ax.legend(
+            loc="upper center", bbox_to_anchor=(0.5, 1.18), ncol=2,
+            frameon=False, handlelength=1.8, columnspacing=2.4,
+        )
+        ax.bar_label(ls_bars, labels=[f"{value:.2%}" for value in ls_values], padding=4, fontsize=9.5)
+        ax.bar_label(
+            baseline_bars, labels=[f"{value:.2%}" for value in baseline_values],
+            padding=4, fontsize=9.5,
+        )
+        fig.savefig(output_dir / "mean_spike_rate_comparison.png", dpi=dpi, bbox_inches="tight")
+        fig.savefig(output_dir / "mean_spike_rate_comparison.svg", bbox_inches="tight")
+        plt.close(fig)
 
 
 def _config_warnings(ls_run: RunData, baseline_run: RunData) -> list[str]:
@@ -469,6 +394,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline-run", type=Path, required=True, help="non-LS experiment directory")
     parser.add_argument("--output-dir", type=Path, default=Path("spike_rate_comparison"))
     parser.add_argument("--window-size", type=int, default=5, help="odd number of epochs around the best observed accuracy")
+    parser.add_argument("--fig-width", type=float, default=10.0, help="figure width in inches")
+    parser.add_argument("--fig-height", type=float, default=6.0, help="figure height in inches")
+    parser.add_argument("--dpi", type=int, default=300, help="PNG dots per inch; SVG remains vector-based")
     parser.add_argument("--shallow-layer")
     parser.add_argument("--middle-layer")
     parser.add_argument("--deep-layer")
@@ -494,8 +422,11 @@ def main(argv: list[str] | None = None) -> int:
             ("Baseline", baseline_run, baseline_best, baseline_window, baseline_rates),
         ]
         _write_csvs(args.output_dir, groups, layers)
-        _write_png(args.output_dir / "mean_spike_rate_comparison.png", ls_rates, baseline_rates, groups, layers)
-    except (OSError, ValueError, json.JSONDecodeError, csv.Error) as exc:
+        _write_plots(
+            args.output_dir, ls_rates, baseline_rates, groups, layers,
+            args.fig_width, args.fig_height, args.dpi,
+        )
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError, csv.Error) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

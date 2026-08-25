@@ -1,10 +1,16 @@
 # LS / non-LS firing-rate comparison
 
 `analysis/analyze_spike_rate.py` compares two training run directories around
-each run's best **observed** test-accuracy epoch. It is dependency-free and
-reads the existing `metrics.csv`, `args.txt`, and `run_summary.json` files.
+each run's best **observed** test-accuracy epoch. It reads the existing
+`metrics.csv`, `args.txt`, and `run_summary.json` files.
 Both historical `OrderedDict([('layer', rate), ...])` records and newer
 `OrderedDict({'layer': rate})`/plain-dictionary records are supported.
+
+Install the plotting dependency once before running the tool:
+
+```bash
+python -m pip install -r analysis/requirements.txt
+```
 
 ## Usage
 
@@ -50,7 +56,9 @@ The output directory contains:
 - `mean_spike_rate_comparison.png`: grouped mean-rate bars for global,
   shallow, middle, and deep scopes. The high-resolution chart identifies the
   compared neuron models, selected epoch windows, exact representative layer
-  names, bar values, and LS-relative firing-rate changes;
+  names, and exact bar values;
+- `mean_spike_rate_comparison.svg`: the same chart as a resolution-independent
+  vector image. Prefer this file for papers, slides, or arbitrary resizing;
 - `spike_rate_summary.csv`: run metadata, selected epochs, representative
   layers, and mean rates;
 - `spike_rate_comparison.csv`: LS-minus-baseline absolute and relative rate
@@ -60,3 +68,25 @@ The script also reports configuration mismatches, partial/resumed logs,
 historical maxima that are unavailable in the supplied directory, one-sided
 windows, severe accuracy changes inside a window, and exact duplicate epoch
 records. Conflicting duplicate records are rejected rather than overwritten.
+
+## Changing image size
+
+Image size follows Matplotlib's standard `figure size × DPI` rule. The defaults
+are 10 × 6 inches at 300 DPI, producing an approximately 3000 × 1800 PNG. Set
+the dimensions directly from the command line:
+
+```bash
+python analysis/analyze_spike_rate.py \
+  --ls-run ./logs/ls_run \
+  --baseline-run ./logs/non_ls_run \
+  --fig-width 12 \
+  --fig-height 7 \
+  --dpi 400
+```
+
+That produces an approximately 4800 × 2800 PNG. `bbox_inches="tight"` may trim
+some outer whitespace, so exact pixel dimensions can differ slightly. The SVG
+uses the same layout but remains sharp at every zoom level.
+
+If editing the code directly is preferred, change the defaults of
+`--fig-width`, `--fig-height`, and `--dpi` in `build_parser()`.
