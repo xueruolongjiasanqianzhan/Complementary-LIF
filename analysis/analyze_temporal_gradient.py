@@ -116,6 +116,15 @@ def _require_runtime():
             ". Install the training environment and analysis/requirements.txt.")
 
 
+def _install_numpy_legacy_aliases(np):
+    """Restore aliases required by this repository's older data dependencies."""
+    for name, value in (("object", object), ("bool", bool), ("int", int)):
+        if name not in np.__dict__:
+            setattr(np, name, value)
+    if "typeDict" not in np.__dict__ and "sctypeDict" in np.__dict__:
+        np.typeDict = np.sctypeDict
+
+
 def _surrogate(config, surrogate_sj, surrogate_self):
     name = config.get("surrogate", "rectangle")
     if name == "sigmoid":
@@ -314,10 +323,11 @@ def main(argv=None):
     if not data_dir:
         raise ValueError("No dataset path found; pass --data-dir.")
     _require_runtime()
+    import numpy as np
+    _install_numpy_legacy_aliases(np)
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import numpy as np
     import torch
 
     random.seed(args.seed)

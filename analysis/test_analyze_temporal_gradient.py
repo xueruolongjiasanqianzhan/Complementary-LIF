@@ -3,8 +3,10 @@ import unittest
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from analysis.analyze_temporal_gradient import (
+    _install_numpy_legacy_aliases,
     _validate_pair,
     build_parser,
     evenly_spaced_indices,
@@ -54,6 +56,14 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
                 capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--ls-run", result.stdout)
+
+    def test_numpy_legacy_aliases_are_installed_before_dataset_imports(self):
+        fake_numpy = SimpleNamespace(sctypeDict={"int": int})
+        _install_numpy_legacy_aliases(fake_numpy)
+        self.assertIs(fake_numpy.int, int)
+        self.assertIs(fake_numpy.bool, bool)
+        self.assertIs(fake_numpy.object, object)
+        self.assertIs(fake_numpy.typeDict, fake_numpy.sctypeDict)
 
 
 if __name__ == "__main__":
