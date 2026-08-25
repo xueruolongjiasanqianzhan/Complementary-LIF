@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from analysis.analyze_temporal_gradient import (
     _install_numpy_legacy_aliases,
+    _time_frame,
     _validate_pair,
     build_parser,
     evenly_spaced_indices,
@@ -64,6 +65,12 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         self.assertIs(fake_numpy.bool, bool)
         self.assertIs(fake_numpy.object, object)
         self.assertIs(fake_numpy.typeDict, fake_numpy.sctypeDict)
+
+    def test_time_frame_accepts_default_dvs_list_batch(self):
+        frames = ["t0", "t1", "t2"]
+        self.assertEqual(_time_frame(frames, 1, 3), "t1")
+        with self.assertRaisesRegex(ValueError, "Expected 4 frame tensors"):
+            _time_frame(frames, 1, 4)
 
 
 if __name__ == "__main__":

@@ -220,6 +220,22 @@ def _training_loss(outputs, labels, config, torch):
     return (1.0 - loss_lambda) * cross_entropy + loss_lambda * functional.mse_loss(outputs, target)
 
 
+def _time_frame(frames, time_step, expected_steps):
+    """Return one time slice from the list produced by the DVS transforms."""
+    if isinstance(frames, (list, tuple)):
+        if len(frames) != expected_steps:
+            raise ValueError(
+                f"Expected {expected_steps} frame tensors, received {len(frames)}.")
+        return frames[time_step]
+    # Retain support for an explicitly time-major tensor supplied by a custom
+    # collate function. The repository's default DVS transform returns a list.
+    if frames.shape[0] != expected_steps:
+        raise ValueError(
+            f"Expected time-major frames with first dimension {expected_steps}, "
+            f"received shape {tuple(frames.shape)}.")
+    return frames[time_step]
+
+
 def _gradient_matrix(config, checkpoint, batch, layer_name, sample_index, device, torch):
     from spikingjelly.clock_driven import functional
 
@@ -243,11 +259,14 @@ def _gradient_matrix(config, checkpoint, batch, layer_name, sample_index, device
     frames, labels = batch
     if sample_index >= labels.shape[0]:
         raise ValueError(f"sample-index {sample_index} is outside batch size {labels.shape[0]}.")
-    frames, labels = frames.to(device), labels.to(device)
+    labels = labels.to(device)
     model.eval()
     model.zero_grad(set_to_none=True)
     functional.reset_net(model)
-    outputs = torch.cat([model(frames[t].float()) for t in range(config["T"])], dim=0)
+    outputs = torch.cat([
+        model(_time_frame(frames, t, config["T"]).float().to(device))
+        for t in range(config["T"])
+    ], dim=0)
     loss = _training_loss(outputs, labels, config, torch)
     loss.backward()
     handle.remove()
