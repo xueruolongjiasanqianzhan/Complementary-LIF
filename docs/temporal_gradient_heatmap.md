@@ -52,15 +52,16 @@ LSLIF checkpoint。默认分析 VGG11 的中部神经元层 `layer3.6`；如果 
   避免较大的第一个时间步把其他列全部压成白色；`linear` 可切回线性色标。该选项不会
   对每个时间步单独归一化，因此 LS 和非 LS 的绝对大小仍可公平比较。
 - `--device`：例如 `cuda:0` 或 `cpu`；默认自动选择。
-- `--fig-width`、`--fig-height`、`--dpi`：默认 `16`、`8`、`300`，可直接调整图片
+- `--fig-width`、`--fig-height`、`--dpi`：默认 `21`、`8`、`300`，可直接调整图片
   画布和清晰度。
 
 ## 输出
 
-- `temporal_gradient_comparison.png`：LS 与非 LS 并排的高分辨率时间梯度热力图。
+- `temporal_gradient_comparison.png`：非 LS、LS 和二者差值并排的高分辨率时间梯度热力图。
 - `temporal_gradient_comparison.svg`：可无限缩放的矢量版本。
 - `temporal_gradients.npz`：同时保存 `*_gradient_raw` 原始/批平均绝对梯度和
   `*_gradient_display` 绘图矩阵，以及真实神经元索引和诊断元数据。
+  `gradient_difference_raw` 保存原始差值，`gradient_difference_display` 保存绘图差值。
 
 横轴是时间步，纵轴是在目标层展平后均匀采样的神经元。默认颜色是固定 batch 的
 膜电位绝对梯度均值经过逐神经元时间归一化后的数值。默认展示最后时间步损失向所有
@@ -70,3 +71,7 @@ checkpoint 使用同一测试批次、样本、层、神经元索引、损失
 量级比较应使用 NPZ 中的 `*_gradient_raw`。由于旧日志没有保存逐神经元、
 逐时间步梯度，仅靠日志无法生成该图；本工具会读取 checkpoint 并补做一次反向传播，
 但不需要重新训练。
+
+第三个面板显示 `LS − Non-LS`：红色表示该神经元/时间步的 LS 梯度更强，蓝色表示
+非 LS 更强，白色表示二者接近。差值图使用以 0 为中心的对称色标；在默认逐神经元
+归一化模式下范围固定为 `[-1, 1]`，因此不会用不对称色标夸大任一方法。

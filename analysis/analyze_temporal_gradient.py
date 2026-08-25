@@ -318,7 +318,8 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
     if limit <= 0:
         limit = float(combined.max()) if combined.size and combined.max() > 0 else 1.0
     plt.rcParams.update({"font.family": "serif", "font.size": 16, "axes.titleweight": "bold"})
-    figure, axes = plt.subplots(1, 2, figsize=(args.fig_width, args.fig_height),
+    difference = ls_matrix - baseline_matrix
+    figure, axes = plt.subplots(1, 3, figsize=(args.fig_width, args.fig_height),
                                 sharex=True, sharey=True, constrained_layout=True)
     norm = None
     cmap = _display_cmap(args.normalization)
@@ -336,7 +337,7 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
                           vmin=-limit, vmax=limit, base=10, clip=True)
     images = []
     for axis, matrix, title in zip(
-            axes, (baseline_matrix, ls_matrix), ("Non-LS (LIF)", "LS (LSLIF)")):
+            axes[:2], (baseline_matrix, ls_matrix), ("Non-LS (LIF)", "LS (LSLIF)")):
         image_kwargs = {"norm": norm} if norm is not None else image_limits
         image = axis.imshow(matrix, aspect="auto", cmap=cmap,
                             interpolation="nearest", origin="upper", **image_kwargs)
@@ -345,14 +346,31 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
         axis.set_xlabel("Time step")
         axis.set_xticks(range(matrix.shape[1]))
         axis.set_xticklabels(range(1, matrix.shape[1] + 1))
+    if args.normalization == "per-neuron":
+        difference_limit = 1.0
+    else:
+        difference_limit = float(np.percentile(np.abs(difference), args.gradient_percentile))
+        if difference_limit <= 0:
+            difference_limit = float(np.abs(difference).max()) or 1.0
+    difference_image = axes[2].imshow(
+        difference, aspect="auto", cmap="RdBu_r", vmin=-difference_limit,
+        vmax=difference_limit, interpolation="nearest", origin="upper")
+    axes[2].set_title("Difference (LS − Non-LS)", pad=14)
+    axes[2].set_xlabel("Time step")
+    axes[2].set_xticks(range(difference.shape[1]))
+    axes[2].set_xticklabels(range(1, difference.shape[1] + 1))
     axes[0].set_ylabel("Sampled neuron index")
     target_label = "final-step loss" if args.gradient_target == "final" else "all-step loss"
     source_label = "membrane" if args.gradient_source == "state" else "input"
     figure.suptitle(f"Temporal {source_label}-gradient propagation at {layer} ({target_label})",
                     fontsize=20, fontweight="bold")
-    colorbar = figure.colorbar(images[0], ax=axes, shrink=0.88, pad=0.02)
+    colorbar = figure.colorbar(images[0], ax=axes[:2], shrink=0.88, pad=0.02)
     colorbar.set_label("Per-neuron normalized |gradient|" if args.normalization == "per-neuron"
                        else f"{source_label.capitalize()} gradient")
+    difference_colorbar = figure.colorbar(difference_image, ax=axes[2], shrink=0.88, pad=0.02)
+    difference_colorbar.set_label(
+        "Normalized gradient difference (LS − Non-LS)"
+        if args.normalization == "per-neuron" else "Gradient difference (LS − Non-LS)")
     output_dir.mkdir(parents=True, exist_ok=True)
     figure.savefig(output_dir / "temporal_gradient_comparison.png", dpi=args.dpi,
                    bbox_inches="tight", facecolor="white")
@@ -388,7 +406,7 @@ def build_parser():
     parser.add_argument("--device", help="Default: cuda:0 when available, otherwise cpu.")
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=2022)
-    parser.add_argument("--fig-width", type=float, default=16.0)
+    parser.add_argument("--fig-width", type=float, default=21.0)
     parser.add_argument("--fig-height", type=float, default=8.0)
     parser.add_argument("--dpi", type=int, default=300)
     return parser
@@ -444,7 +462,9 @@ def main(argv=None):
     args.output_dir.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(args.output_dir / "temporal_gradients.npz",
                         ls_gradient_raw=ls_raw, baseline_gradient_raw=baseline_raw,
+                        gradient_difference_raw=ls_raw - baseline_raw,
                         ls_gradient_display=ls_matrix, baseline_gradient_display=baseline_matrix,
+                        gradient_difference_display=ls_matrix - baseline_matrix,
                         neuron_indices=np.asarray(indices), layer=np.asarray(args.layer),
                         sample_index=np.asarray(args.sample_index), batch_index=np.asarray(args.batch_index),
                         gradient_target=np.asarray(args.gradient_target),
