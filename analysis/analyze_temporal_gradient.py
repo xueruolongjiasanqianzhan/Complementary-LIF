@@ -265,10 +265,14 @@ def _gradient_matrix(config, checkpoint, batch, layer_name, sample_index,
             raise RuntimeError(f"Neuron layer {layer_name} does not expose its pre-spike membrane.")
         retain(module.last_v_pre)
 
+    target_module = modules[layer_name]
     if gradient_source == "state":
-        handle = modules[layer_name].register_forward_hook(capture_state)
+        # LSLIF only retains its fused membrane while this explicit diagnostic
+        # flag is enabled, so ordinary training has no extra graph reference.
+        target_module.gradient_probe_enabled = True
+        handle = target_module.register_forward_hook(capture_state)
     else:
-        handle = modules[layer_name].register_forward_pre_hook(capture_input)
+        handle = target_module.register_forward_pre_hook(capture_input)
     frames, labels = batch
     if sample_index >= labels.shape[0]:
         raise ValueError(f"sample-index {sample_index} is outside batch size {labels.shape[0]}.")
@@ -288,6 +292,9 @@ def _gradient_matrix(config, checkpoint, batch, layer_name, sample_index,
         loss = _training_loss(outputs, labels, config, torch)
     loss.backward()
     handle.remove()
+    if gradient_source == "state":
+        target_module.gradient_probe_enabled = False
+        target_module.last_v_pre = None
     if len(captured) != config["T"] or any(value.grad is None for value in captured):
         raise RuntimeError(f"Expected {config['T']} temporal gradients, captured {len(captured)}.")
     if aggregation == "batch-mean-abs":

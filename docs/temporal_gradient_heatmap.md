@@ -41,7 +41,8 @@ LSLIF checkpoint。默认分析 VGG11 的中部神经元层 `layer3.6`；如果 
   的梯度只能通过神经元状态沿时间反传，这才对应 BPTT 时间梯度传播。`all` 可复现把
   每个时间步分类损失相加的旧行为。
 - `--gradient-source`：默认 `state`，LIF 使用阈值判断前的膜电位，LSLIF 使用主膜电位
-  与历史支路融合后的膜电位；`input` 可切回旧版的神经元层输入梯度。
+  与历史支路融合后的膜电位；`input` 可切回旧版的神经元层输入梯度。LSLIF 仅在分析
+  工具显式开启诊断标志时保留该中间张量，普通训练不会额外持有其 autograd 计算图。
 - `--aggregation`：默认 `batch-mean-abs`，对固定测试 batch 中各样本的绝对梯度取均值，
   减少单个样本脉冲稀疏造成的大片空白；`sample-signed` 可查看指定样本的有符号梯度。
 - `--normalization`：默认 `per-neuron`，每个神经元按其跨时间步最大绝对梯度归一化，

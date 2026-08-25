@@ -604,10 +604,10 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
         if self.history_mode == 'post_spike':
             history_term = history_term * self.has_fired.to(dtype=history_term.dtype)
         total_mem = m_t + history_term
-        # Expose the pre-spike fused membrane for gradient diagnostics. This is
-        # intentionally a non-persistent runtime attribute and does not alter
-        # checkpoints or neuron dynamics.
-        self.last_v_pre = total_mem
+        # Keep diagnostics opt-in: retaining this intermediate during ordinary
+        # training would unnecessarily extend the autograd graph's lifetime.
+        if getattr(self, 'gradient_probe_enabled', False):
+            self.last_v_pre = total_mem
 
         th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
         spike = self._success_fire(total_mem, th_f)
