@@ -54,6 +54,8 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         self.assertEqual(args.aggregation, "batch-mean-abs")
         self.assertEqual(args.normalization, "per-neuron")
         self.assertEqual(args.color_scale, "symlog")
+        self.assertEqual(args.normalized_color_gamma, 0.35)
+        self.assertEqual(args.difference_linthresh, 0.02)
         self.assertEqual(args.fig_width, 21.0)
 
     def test_script_can_start_outside_repository(self):

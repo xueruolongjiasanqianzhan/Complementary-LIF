@@ -311,7 +311,7 @@ def _display_cmap(normalization):
 
 
 def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt):
-    from matplotlib.colors import SymLogNorm
+    from matplotlib.colors import PowerNorm, SymLogNorm
 
     combined = np.concatenate([np.abs(ls_matrix).ravel(), np.abs(baseline_matrix).ravel()])
     limit = float(np.percentile(combined, args.gradient_percentile))
@@ -328,7 +328,10 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
         # A sequential white-to-blue map makes zero gradients white and uses
         # progressively darker blue for stronger propagation, matching the
         # conventional normalized-gradient heatmap style without neon colors.
-        image_limits = {"vmin": 0.0, "vmax": 1.0}
+        # gamma < 1 expands low non-zero values: only genuinely tiny gradients
+        # remain close to white, while weak propagation is still distinguishable.
+        norm = PowerNorm(gamma=args.normalized_color_gamma, vmin=0.0, vmax=1.0, clip=True)
+        image_limits = {}
     elif args.color_scale == "symlog":
         # Temporal gradients often span several orders of magnitude. A shared
         # symmetric-log scale reveals later steps without normalizing columns
@@ -348,13 +351,19 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
         axis.set_xticklabels(range(1, matrix.shape[1] + 1))
     if args.normalization == "per-neuron":
         difference_limit = 1.0
+        difference_norm = SymLogNorm(
+            linthresh=args.difference_linthresh, linscale=1.0,
+            vmin=-1.0, vmax=1.0, base=10, clip=True)
     else:
         difference_limit = float(np.percentile(np.abs(difference), args.gradient_percentile))
         if difference_limit <= 0:
             difference_limit = float(np.abs(difference).max()) or 1.0
+        difference_norm = None
+    difference_kwargs = ({"norm": difference_norm} if difference_norm is not None
+                         else {"vmin": -difference_limit, "vmax": difference_limit})
     difference_image = axes[2].imshow(
-        difference, aspect="auto", cmap="RdBu_r", vmin=-difference_limit,
-        vmax=difference_limit, interpolation="nearest", origin="upper")
+        difference, aspect="auto", cmap="RdBu_r",
+        interpolation="nearest", origin="upper", **difference_kwargs)
     axes[2].set_title("Difference (LS − Non-LS)", pad=14)
     axes[2].set_xlabel("Time step")
     axes[2].set_xticks(range(difference.shape[1]))
@@ -401,6 +410,10 @@ def build_parser():
                         help="Aggregate absolute gradients over the fixed batch (default) or one sample.")
     parser.add_argument("--normalization", choices=("per-neuron", "none"), default="per-neuron",
                         help="Normalize each neuron's temporal profile for the display (default).")
+    parser.add_argument("--normalized-color-gamma", type=float, default=0.35,
+                        help="Power-law color gamma; values below 1 emphasize weak gradients.")
+    parser.add_argument("--difference-linthresh", type=float, default=0.02,
+                        help="Near-zero linear range for the normalized difference color scale.")
     parser.add_argument("--color-scale", choices=("symlog", "linear"), default="symlog",
                         help="Shared signed color scale; symlog reveals small temporal gradients.")
     parser.add_argument("--device", help="Default: cuda:0 when available, otherwise cpu.")
@@ -418,6 +431,10 @@ def main(argv=None):
         raise ValueError("Batch size, neuron count, figure dimensions, and DPI must be positive.")
     if not 0 < args.gradient_percentile <= 100:
         raise ValueError("gradient-percentile must be in (0, 100].")
+    if args.normalized_color_gamma <= 0:
+        raise ValueError("normalized-color-gamma must be positive.")
+    if not 0 < args.difference_linthresh <= 1:
+        raise ValueError("difference-linthresh must be in (0, 1].")
     ls_config, baseline_config = load_config(args.ls_run), load_config(args.baseline_run)
     _validate_pair(ls_config, baseline_config)
     data_dir = args.data_dir or ls_config.get("data_dir")
@@ -471,6 +488,8 @@ def main(argv=None):
                         gradient_source=np.asarray(args.gradient_source),
                         aggregation=np.asarray(args.aggregation),
                         normalization=np.asarray(args.normalization),
+                        normalized_color_gamma=np.asarray(args.normalized_color_gamma),
+                        difference_linthresh=np.asarray(args.difference_linthresh),
                         color_scale=np.asarray(args.color_scale),
                         ls_loss=np.asarray(ls_loss), baseline_loss=np.asarray(baseline_loss))
     _plot(ls_matrix, baseline_matrix, indices, args.layer, args.output_dir, args, np, plt)
