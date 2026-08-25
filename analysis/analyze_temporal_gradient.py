@@ -204,10 +204,11 @@ def _load_test_batch(config, data_dir, batch_size, batch_index, workers, seed, t
     raise ValueError(f"batch-index {batch_index} exceeds the test loader ({len(loader)} batches).")
 
 
-def _training_loss(outputs, labels, config, torch):
+def _training_loss(outputs, labels, config, torch, time_steps=None):
     import torch.nn.functional as functional
 
-    repeated_labels = torch.cat([labels for _ in range(config["T"])], dim=0)
+    time_steps = config["T"] if time_steps is None else time_steps
+    repeated_labels = torch.cat([labels for _ in range(time_steps)], dim=0)
     cross_entropy = functional.cross_entropy(
         outputs, repeated_labels, label_smoothing=config.get("label_smoothing", 0.0))
     loss_lambda = config.get("loss_lambda", 0.0)
@@ -236,7 +237,8 @@ def _time_frame(frames, time_step, expected_steps):
     return frames[time_step]
 
 
-def _gradient_matrix(config, checkpoint, batch, layer_name, sample_index, device, torch):
+def _gradient_matrix(config, checkpoint, batch, layer_name, sample_index,
+                     gradient_target, gradient_source, aggregation, device, torch):
     from spikingjelly.clock_driven import functional
 
     model = _build_model(config, device)
@@ -248,14 +250,25 @@ def _gradient_matrix(config, checkpoint, batch, layer_name, sample_index, device
         raise ValueError(f"Layer {layer_name!r} not found. Available neuron layers: {candidates}")
     captured = []
 
-    def capture_input(_module, inputs):
-        value = inputs[0]
+    def retain(value):
         if not value.requires_grad:
-            raise RuntimeError(f"Input to {layer_name} does not require gradients.")
+            raise RuntimeError(f"Selected value at {layer_name} does not require gradients.")
         value.retain_grad()
         captured.append(value)
 
-    handle = modules[layer_name].register_forward_pre_hook(capture_input)
+    def capture_input(_module, inputs):
+        value = inputs[0]
+        retain(value)
+
+    def capture_state(module, _inputs, _output):
+        if not hasattr(module, "last_v_pre"):
+            raise RuntimeError(f"Neuron layer {layer_name} does not expose its pre-spike membrane.")
+        retain(module.last_v_pre)
+
+    if gradient_source == "state":
+        handle = modules[layer_name].register_forward_hook(capture_state)
+    else:
+        handle = modules[layer_name].register_forward_pre_hook(capture_input)
     frames, labels = batch
     if sample_index >= labels.shape[0]:
         raise ValueError(f"sample-index {sample_index} is outside batch size {labels.shape[0]}.")
@@ -267,18 +280,28 @@ def _gradient_matrix(config, checkpoint, batch, layer_name, sample_index, device
         model(_time_frame(frames, t, config["T"]).float().to(device))
         for t in range(config["T"])
     ], dim=0)
-    loss = _training_loss(outputs, labels, config, torch)
+    if gradient_target == "final":
+        # A final-step objective measures genuine BPTT propagation: gradients
+        # can reach earlier inputs only through the neuron's temporal state.
+        loss = _training_loss(outputs[-labels.shape[0]:], labels, config, torch, time_steps=1)
+    else:
+        loss = _training_loss(outputs, labels, config, torch)
     loss.backward()
     handle.remove()
     if len(captured) != config["T"] or any(value.grad is None for value in captured):
         raise RuntimeError(f"Expected {config['T']} temporal gradients, captured {len(captured)}.")
-    matrix = torch.stack(
-        [value.grad[sample_index].detach().reshape(-1).cpu() for value in captured], dim=1)
+    if aggregation == "batch-mean-abs":
+        columns = [value.grad.detach().abs().mean(dim=0).reshape(-1).cpu() for value in captured]
+    else:
+        columns = [value.grad[sample_index].detach().reshape(-1).cpu() for value in captured]
+    matrix = torch.stack(columns, dim=1)
     functional.reset_net(model)
     return matrix, float(loss.detach().cpu())
 
 
 def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt):
+    from matplotlib.colors import SymLogNorm
+
     combined = np.concatenate([np.abs(ls_matrix).ravel(), np.abs(baseline_matrix).ravel()])
     limit = float(np.percentile(combined, args.gradient_percentile))
     if limit <= 0:
@@ -286,20 +309,37 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
     plt.rcParams.update({"font.family": "serif", "font.size": 16, "axes.titleweight": "bold"})
     figure, axes = plt.subplots(1, 2, figsize=(args.fig_width, args.fig_height),
                                 sharex=True, sharey=True, constrained_layout=True)
+    norm = None
+    cmap = "RdBu_r"
+    image_limits = {"vmin": -limit, "vmax": limit}
+    if args.normalization == "per-neuron":
+        cmap = "magma"
+        image_limits = {"vmin": 0.0, "vmax": 1.0}
+    elif args.color_scale == "symlog":
+        # Temporal gradients often span several orders of magnitude. A shared
+        # symmetric-log scale reveals later steps without normalizing columns
+        # independently or destroying the LS/non-LS magnitude comparison.
+        norm = SymLogNorm(linthresh=max(limit * 1e-3, 1e-30), linscale=1.0,
+                          vmin=-limit, vmax=limit, base=10, clip=True)
     images = []
     for axis, matrix, title in zip(
             axes, (baseline_matrix, ls_matrix), ("Non-LS (LIF)", "LS (LSLIF)")):
-        image = axis.imshow(matrix, aspect="auto", cmap="RdBu_r", vmin=-limit, vmax=limit,
-                            interpolation="nearest", origin="upper")
+        image_kwargs = {"norm": norm} if norm is not None else image_limits
+        image = axis.imshow(matrix, aspect="auto", cmap=cmap,
+                            interpolation="nearest", origin="upper", **image_kwargs)
         images.append(image)
         axis.set_title(title, pad=14)
         axis.set_xlabel("Time step")
         axis.set_xticks(range(matrix.shape[1]))
         axis.set_xticklabels(range(1, matrix.shape[1] + 1))
     axes[0].set_ylabel("Sampled neuron index")
-    figure.suptitle(f"Temporal input-gradient propagation at {layer}", fontsize=20, fontweight="bold")
+    target_label = "final-step loss" if args.gradient_target == "final" else "all-step loss"
+    source_label = "membrane" if args.gradient_source == "state" else "input"
+    figure.suptitle(f"Temporal {source_label}-gradient propagation at {layer} ({target_label})",
+                    fontsize=20, fontweight="bold")
     colorbar = figure.colorbar(images[0], ax=axes, shrink=0.88, pad=0.02)
-    colorbar.set_label("Input gradient")
+    colorbar.set_label("Per-neuron normalized |gradient|" if args.normalization == "per-neuron"
+                       else f"{source_label.capitalize()} gradient")
     output_dir.mkdir(parents=True, exist_ok=True)
     figure.savefig(output_dir / "temporal_gradient_comparison.png", dpi=args.dpi,
                    bbox_inches="tight", facecolor="white")
@@ -321,6 +361,17 @@ def build_parser():
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--max-neurons", type=int, default=512)
     parser.add_argument("--gradient-percentile", type=float, default=99.0)
+    parser.add_argument("--gradient-target", choices=("final", "all"), default="final",
+                        help="Backpropagate final-step loss (default) or the training loss at every step.")
+    parser.add_argument("--gradient-source", choices=("state", "input"), default="state",
+                        help="Inspect the pre-spike membrane state (default) or layer input.")
+    parser.add_argument("--aggregation", choices=("batch-mean-abs", "sample-signed"),
+                        default="batch-mean-abs",
+                        help="Aggregate absolute gradients over the fixed batch (default) or one sample.")
+    parser.add_argument("--normalization", choices=("per-neuron", "none"), default="per-neuron",
+                        help="Normalize each neuron's temporal profile for the display (default).")
+    parser.add_argument("--color-scale", choices=("symlog", "linear"), default="symlog",
+                        help="Shared signed color scale; symlog reveals small temporal gradients.")
     parser.add_argument("--device", help="Default: cuda:0 when available, otherwise cpu.")
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=2022)
@@ -360,19 +411,34 @@ def main(argv=None):
     ls_checkpoint = _checkpoint_path(args.ls_run, args.checkpoint_name)
     baseline_checkpoint = _checkpoint_path(args.baseline_run, args.checkpoint_name)
     baseline_full, baseline_loss = _gradient_matrix(
-        baseline_config, baseline_checkpoint, batch, args.layer, args.sample_index, device, torch)
+        baseline_config, baseline_checkpoint, batch, args.layer, args.sample_index,
+        args.gradient_target, args.gradient_source, args.aggregation, device, torch)
     ls_full, ls_loss = _gradient_matrix(
-        ls_config, ls_checkpoint, batch, args.layer, args.sample_index, device, torch)
+        ls_config, ls_checkpoint, batch, args.layer, args.sample_index,
+        args.gradient_target, args.gradient_source, args.aggregation, device, torch)
     if ls_full.shape != baseline_full.shape:
         raise ValueError(f"Gradient shapes differ: LS {tuple(ls_full.shape)}, baseline {tuple(baseline_full.shape)}.")
     indices = evenly_spaced_indices(ls_full.shape[0], args.max_neurons)
-    ls_matrix = ls_full[indices].numpy()
-    baseline_matrix = baseline_full[indices].numpy()
+    ls_raw = ls_full[indices].numpy()
+    baseline_raw = baseline_full[indices].numpy()
+    if args.normalization == "per-neuron":
+        ls_scale = np.max(np.abs(ls_raw), axis=1, keepdims=True)
+        baseline_scale = np.max(np.abs(baseline_raw), axis=1, keepdims=True)
+        ls_matrix = np.abs(ls_raw) / np.maximum(ls_scale, 1e-30)
+        baseline_matrix = np.abs(baseline_raw) / np.maximum(baseline_scale, 1e-30)
+    else:
+        ls_matrix, baseline_matrix = ls_raw, baseline_raw
     args.output_dir.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(args.output_dir / "temporal_gradients.npz",
-                        ls_gradient=ls_matrix, baseline_gradient=baseline_matrix,
+                        ls_gradient_raw=ls_raw, baseline_gradient_raw=baseline_raw,
+                        ls_gradient_display=ls_matrix, baseline_gradient_display=baseline_matrix,
                         neuron_indices=np.asarray(indices), layer=np.asarray(args.layer),
                         sample_index=np.asarray(args.sample_index), batch_index=np.asarray(args.batch_index),
+                        gradient_target=np.asarray(args.gradient_target),
+                        gradient_source=np.asarray(args.gradient_source),
+                        aggregation=np.asarray(args.aggregation),
+                        normalization=np.asarray(args.normalization),
+                        color_scale=np.asarray(args.color_scale),
                         ls_loss=np.asarray(ls_loss), baseline_loss=np.asarray(baseline_loss))
     _plot(ls_matrix, baseline_matrix, indices, args.layer, args.output_dir, args, np, plt)
     print(f"Saved temporal-gradient comparison to {args.output_dir}")

@@ -48,6 +48,11 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         self.assertEqual(args.layer, "layer3.6")
         self.assertEqual(args.checkpoint_name, "checkpoint_max.pth")
         self.assertEqual(args.max_neurons, 512)
+        self.assertEqual(args.gradient_target, "final")
+        self.assertEqual(args.gradient_source, "state")
+        self.assertEqual(args.aggregation, "batch-mean-abs")
+        self.assertEqual(args.normalization, "per-neuron")
+        self.assertEqual(args.color_scale, "symlog")
 
     def test_script_can_start_outside_repository(self):
         script = Path(__file__).with_name("analyze_temporal_gradient.py").resolve()
