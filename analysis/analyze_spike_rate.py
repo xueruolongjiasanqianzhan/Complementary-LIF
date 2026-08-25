@@ -322,12 +322,12 @@ def _write_plots(
     ls_model, baseline_model = groups[0][1].model_name, groups[1][1].model_name
     with plt.rc_context({
         "font.family": "DejaVu Serif",
-        "font.size": 11,
-        "axes.labelsize": 12,
-        "axes.titlesize": 15,
-        "xtick.labelsize": 10,
-        "ytick.labelsize": 10,
-        "legend.fontsize": 11,
+        "font.size": 22,
+        "axes.labelsize": 24,
+        "axes.titlesize": 30,
+        "xtick.labelsize": 20,
+        "ytick.labelsize": 20,
+        "legend.fontsize": 22,
         "figure.facecolor": "white",
         "axes.facecolor": "white",
         "savefig.facecolor": "white",
@@ -360,10 +360,10 @@ def _write_plots(
             edgecolor="#94A3B8", facecolor="white", framealpha=0.95,
             handlelength=1.8, borderpad=0.8, labelspacing=0.7,
         )
-        ax.bar_label(ls_bars, labels=[f"{value:.2%}" for value in ls_values], padding=4, fontsize=9.5)
+        ax.bar_label(ls_bars, labels=[f"{value:.2%}" for value in ls_values], padding=6, fontsize=19)
         ax.bar_label(
             baseline_bars, labels=[f"{value:.2%}" for value in baseline_values],
-            padding=4, fontsize=9.5,
+            padding=6, fontsize=19,
         )
         fig.savefig(output_dir / "mean_spike_rate_comparison.png", dpi=dpi, bbox_inches="tight")
         fig.savefig(output_dir / "mean_spike_rate_comparison.svg", bbox_inches="tight")
