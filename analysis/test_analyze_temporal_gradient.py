@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from analysis.analyze_temporal_gradient import (
+    _display_cmap,
     _install_numpy_legacy_aliases,
     _time_frame,
     _validate_pair,
@@ -76,6 +77,10 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         self.assertEqual(_time_frame(frames, 1, 3), "t1")
         with self.assertRaisesRegex(ValueError, "Expected 4 frame tensors"):
             _time_frame(frames, 1, 4)
+
+    def test_normalized_heatmap_uses_white_to_blue_colormap(self):
+        self.assertEqual(_display_cmap("per-neuron"), "Blues")
+        self.assertEqual(_display_cmap("none"), "RdBu_r")
 
 
 if __name__ == "__main__":

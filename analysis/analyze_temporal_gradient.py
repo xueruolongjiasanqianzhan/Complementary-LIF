@@ -306,6 +306,10 @@ def _gradient_matrix(config, checkpoint, batch, layer_name, sample_index,
     return matrix, float(loss.detach().cpu())
 
 
+def _display_cmap(normalization):
+    return "Blues" if normalization == "per-neuron" else "RdBu_r"
+
+
 def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt):
     from matplotlib.colors import SymLogNorm
 
@@ -317,10 +321,12 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
     figure, axes = plt.subplots(1, 2, figsize=(args.fig_width, args.fig_height),
                                 sharex=True, sharey=True, constrained_layout=True)
     norm = None
-    cmap = "RdBu_r"
+    cmap = _display_cmap(args.normalization)
     image_limits = {"vmin": -limit, "vmax": limit}
     if args.normalization == "per-neuron":
-        cmap = "magma"
+        # A sequential white-to-blue map makes zero gradients white and uses
+        # progressively darker blue for stronger propagation, matching the
+        # conventional normalized-gradient heatmap style without neon colors.
         image_limits = {"vmin": 0.0, "vmax": 1.0}
     elif args.color_scale == "symlog":
         # Temporal gradients often span several orders of magnitude. A shared
