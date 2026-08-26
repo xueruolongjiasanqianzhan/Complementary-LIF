@@ -9,6 +9,7 @@ from unittest import mock
 from analysis.analyze_temporal_gradient import (
     _absolute_display_matrices,
     _final_step_retention_matrix,
+    _signed_final_step_retention_matrix,
     _display_cmap,
     _install_numpy_legacy_aliases,
     _time_frame,
@@ -63,6 +64,7 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         self.assertEqual(args.cross_layer_count, 5)
         self.assertEqual(args.horizon_threshold, 1e-2)
         self.assertEqual(args.gradient_target, "final")
+        self.assertIsNone(args.gradient_vmax)
         self.assertEqual(args.gradient_source, "input")
         self.assertEqual(args.aggregation, "batch-mean-abs")
         self.assertEqual(args.normalization, "final-step")
@@ -70,6 +72,34 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         self.assertEqual(args.normalized_color_gamma, 0.35)
         self.assertEqual(args.difference_linthresh, 0.02)
         self.assertEqual(args.fig_width, 21.0)
+        self.assertEqual(args.paper_linthresh, 1e-4)
+
+    def test_cli_accepts_all_neuron_layers(self):
+        args = build_parser().parse_args([
+            "--ls-run", "ls", "--baseline-run", "base", "--layer", "all",
+        ])
+        self.assertEqual(args.layer, "all")
+        self.assertEqual(args.gradient_source, "input")
+
+    def test_cli_accepts_paper_style_overview(self):
+        args = build_parser().parse_args([
+            "--ls-run", "ls", "--baseline-run", "base", "--paper-style",
+        ])
+        self.assertTrue(args.paper_style)
+
+    def test_fixed_gradient_limit_requires_absolute_normalization(self):
+        with self.assertRaisesRegex(ValueError, "only valid"):
+            main([
+                "--ls-run", "ls", "--baseline-run", "base",
+                "--gradient-vmax", "0.1",
+            ])
+
+    def test_paper_linthresh_must_be_between_zero_and_one(self):
+        with self.assertRaisesRegex(ValueError, "paper-linthresh"):
+            main([
+                "--ls-run", "ls", "--baseline-run", "base",
+                "--paper-linthresh", "0",
+            ])
 
     def test_script_can_start_outside_repository(self):
         script = Path(__file__).with_name("analyze_temporal_gradient.py").resolve()
@@ -107,6 +137,15 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         np.testing.assert_array_equal(ls, [[2.0, 1.0]])
         np.testing.assert_array_equal(baseline, [[3.0, 4.0]])
 
+    def test_signed_global_display_preserves_both_gradient_directions(self):
+        import numpy as np
+
+        ls, baseline = _absolute_display_matrices(
+            np.asarray([[-1.0, 0.0, 1.0]]),
+            np.asarray([[1.0, 0.0, -1.0]]), "signed-global", np)
+        np.testing.assert_array_equal(ls, [[-1.0, 0.0, 1.0]])
+        np.testing.assert_array_equal(baseline, [[1.0, 0.0, -1.0]])
+
     def test_final_step_matrix_normalization_uses_orders_of_magnitude(self):
         import numpy as np
 
@@ -115,6 +154,16 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         np.testing.assert_allclose(retention[:, -1], np.ones(2))
         np.testing.assert_allclose(retention[0], [0.01, 0.1, 1.0])
         np.testing.assert_allclose(np.diff(np.log10(retention[0])), [1.0, 1.0])
+
+    def test_signed_final_step_normalization_removes_terminal_scale(self):
+        import numpy as np
+
+        matrix = np.asarray([
+            [1.0, -2.0, 4.0], [10.0, -20.0, 40.0], [1.0, 2.0, 1e-20],
+        ])
+        retention = _signed_final_step_retention_matrix(matrix, np)
+        np.testing.assert_allclose(retention[:2], [[0.25, -0.5, 1.0], [0.25, -0.5, 1.0]])
+        np.testing.assert_array_equal(retention[2], [0.0, 0.0, 0.0])
 
     def test_main_end_to_end_generates_only_the_comparison_figure(self):
         """Exercise main so stale calls to removed plotting helpers cannot ship."""
@@ -159,17 +208,22 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
                     "analysis.analyze_temporal_gradient._checkpoint_path",
                     return_value=Path("checkpoint.pth")), mock.patch(
                     "analysis.analyze_temporal_gradient._gradient_matrix",
-                    side_effect=((gradient, 1.0), (gradient * 2, 0.5))):
+                    side_effect=((gradient, 1.0), (gradient * 2, 0.5))) as gradient_mock:
                 result = main([
                     "--ls-run", "ls", "--baseline-run", "baseline",
                     "--output-dir", str(output_dir), "--device", "cpu",
-                    "--max-neurons", "2", "--dpi", "72",
+                    "--max-neurons", "2", "--dpi", "72", "--paper-style",
                 ])
 
             self.assertEqual(result, 0)
+            self.assertTrue(all(call.args[3] == "all" for call in gradient_mock.call_args_list))
             self.assertTrue((output_dir / "temporal_gradient_comparison.png").is_file())
             self.assertTrue((output_dir / "temporal_gradient_comparison.svg").is_file())
             self.assertTrue((output_dir / "temporal_gradients.npz").is_file())
+            with np.load(output_dir / "temporal_gradients.npz") as saved:
+                self.assertEqual(saved["normalization"].item(), "signed-final-step")
+                self.assertEqual(saved["aggregation"].item(), "batch-mean-signed")
+                self.assertEqual(saved["paper_linthresh"].item(), 1e-4)
             self.assertEqual(
                 sorted(path.name for path in output_dir.glob("*.png")),
                 ["temporal_gradient_comparison.png"])
