@@ -39,6 +39,10 @@ dropout 不一致，工具会输出显式警告。它仍允许生成探索性图
 - `--batch-index` / `--sample-index`：测试批次及批次内样本，默认均为 0。
 - `--batch-size`：仅影响诊断反向传播，默认 16。
 - `--max-neurons`：沿展平后的通道和空间维均匀采样的最大神经元数，默认 512。
+- `--cross-layer-count`：跨层热力图自动均匀抽取的神经元层数，默认 5。指定的
+  `--layer` 无论是否被抽中都会包含在图中。每个额外层需要为两个 checkpoint 各补做
+  一次诊断前向/反向，因此命令不变，但运行时间会增加；显存峰值仍接近单层分析。
+- `--horizon-threshold`：有效梯度时间跨度使用的保持率阈值，默认 `1e-2`。
 - `--gradient-percentile`：两种方法共同颜色范围的绝对值百分位，默认 99；两幅图
   始终使用同一个对称色标，不能分别归一化。
 - `--gradient-target`：默认 `final`，只从最后时间步的分类损失反向传播，使较早时间步
@@ -66,6 +70,11 @@ dropout 不一致，工具会输出显式警告。它仍允许生成探索性图
 
 - `temporal_gradient_comparison.png`：非 LS、LS 和二者差值并排的高分辨率时间梯度热力图。
 - `temporal_gradient_comparison.svg`：可无限缩放的矢量版本。
+- `temporal_gradient_profile.{png,svg}`：指定层每个时间步的平均绝对梯度，使用对数纵轴。
+- `temporal_gradient_retention.{png,svg}`：指定层相对最后时间步的梯度保持率。
+- `temporal_gradient_summary.{png,svg}`：指定层的 log10 梯度衰减斜率和有效梯度时间跨度。
+- `cross_layer_gradient_ratio.{png,svg}`：多个均匀采样层的
+  `log10(LS mean-|gradient| / Non-LS mean-|gradient|)` 时间热力图。
 - `temporal_gradients.npz`：同时保存 `*_gradient_raw` 原始/批平均绝对梯度和
   `*_gradient_display` 绘图矩阵，以及真实神经元索引和诊断元数据。
   `retention_log10_ratio` 保存第三个面板使用的 LS/Non-LS 保持率 log10 比值。
