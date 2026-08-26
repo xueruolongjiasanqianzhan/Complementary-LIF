@@ -253,35 +253,48 @@ def _gradient_matrix(config, checkpoint, batch, layer_name, sample_index,
     model = _build_model(config, device)
     _load_weights(model, checkpoint, device, torch)
     modules = dict(model.named_modules())
-    if layer_name not in modules:
-        candidates = [name for name, module in modules.items()
-                      if module.__class__.__name__ in ("VanillaLIFNeuron", "LSLIFNeuron")]
-        raise ValueError(f"Layer {layer_name!r} not found. Available neuron layers: {candidates}")
-    captured = []
-
-    def retain(value):
-        if not value.requires_grad:
-            raise RuntimeError(f"Selected value at {layer_name} does not require gradients.")
-        value.retain_grad()
-        captured.append(value)
-
-    def capture_input(_module, inputs):
-        value = inputs[0]
-        retain(value)
-
-    def capture_state(module, _inputs, _output):
-        if not hasattr(module, "last_v_pre"):
-            raise RuntimeError(f"Neuron layer {layer_name} does not expose its pre-spike membrane.")
-        retain(module.last_v_pre)
-
-    target_module = modules[layer_name]
-    if gradient_source == "state":
-        # LSLIF only retains its fused membrane while this explicit diagnostic
-        # flag is enabled, so ordinary training has no extra graph reference.
-        target_module.gradient_probe_enabled = True
-        handle = target_module.register_forward_hook(capture_state)
+    candidates = [name for name, module in modules.items()
+                  if module.__class__.__name__ in ("VanillaLIFNeuron", "LSLIFNeuron")]
+    if layer_name == "all":
+        if gradient_source != "input":
+            raise ValueError("--layer all currently requires --gradient-source input.")
+        selected_layers = candidates
+    elif layer_name in modules:
+        selected_layers = [layer_name]
     else:
-        handle = target_module.register_forward_pre_hook(capture_input)
+        raise ValueError(f"Layer {layer_name!r} not found. Available neuron layers: {candidates}")
+    if not selected_layers:
+        raise ValueError("No LIF/LSLIF neuron layers were found in the selected model.")
+    captured = {name: [] for name in selected_layers}
+
+    def retain(name, value):
+        if not value.requires_grad:
+            raise RuntimeError(f"Selected value at {name} does not require gradients.")
+        value.retain_grad()
+        captured[name].append(value)
+
+    def input_hook(name):
+        def capture_input(_module, inputs):
+            retain(name, inputs[0])
+        return capture_input
+
+    def state_hook(name):
+        def capture_state(module, _inputs, _output):
+            if not hasattr(module, "last_v_pre"):
+                raise RuntimeError(f"Neuron layer {name} does not expose its pre-spike membrane.")
+            retain(name, module.last_v_pre)
+        return capture_state
+
+    handles = []
+    for name in selected_layers:
+        target_module = modules[name]
+        if gradient_source == "state":
+            # LSLIF only retains its fused membrane while this explicit diagnostic
+            # flag is enabled, so ordinary training has no extra graph reference.
+            target_module.gradient_probe_enabled = True
+            handles.append(target_module.register_forward_hook(state_hook(name)))
+        else:
+            handles.append(target_module.register_forward_pre_hook(input_hook(name)))
     frames, labels = batch
     if sample_index >= labels.shape[0]:
         raise ValueError(f"sample-index {sample_index} is outside batch size {labels.shape[0]}.")
@@ -300,17 +313,29 @@ def _gradient_matrix(config, checkpoint, batch, layer_name, sample_index,
     else:
         loss = _training_loss(outputs, labels, config, torch)
     loss.backward()
-    handle.remove()
+    for handle in handles:
+        handle.remove()
     if gradient_source == "state":
-        target_module.gradient_probe_enabled = False
-        target_module.last_v_pre = None
-    if len(captured) != config["T"] or any(value.grad is None for value in captured):
-        raise RuntimeError(f"Expected {config['T']} temporal gradients, captured {len(captured)}.")
-    if aggregation == "batch-mean-abs":
-        columns = [value.grad.detach().abs().mean(dim=0).reshape(-1).cpu() for value in captured]
-    else:
-        columns = [value.grad[sample_index].detach().reshape(-1).cpu() for value in captured]
-    matrix = torch.stack(columns, dim=1)
+        for name in selected_layers:
+            modules[name].gradient_probe_enabled = False
+            modules[name].last_v_pre = None
+    layer_matrices = []
+    for name in selected_layers:
+        values = captured[name]
+        if len(values) != config["T"] or any(value.grad is None for value in values):
+            raise RuntimeError(
+                f"Expected {config['T']} temporal gradients at {name}, captured {len(values)}.")
+        if aggregation == "batch-mean-abs":
+            columns = [value.grad.detach().abs().mean(dim=0).reshape(-1).cpu()
+                       for value in values]
+        elif aggregation == "batch-mean-signed":
+            columns = [value.grad.detach().mean(dim=0).reshape(-1).cpu()
+                       for value in values]
+        else:
+            columns = [value.grad[sample_index].detach().reshape(-1).cpu()
+                       for value in values]
+        layer_matrices.append(torch.stack(columns, dim=1))
+    matrix = torch.cat(layer_matrices, dim=0)
     functional.reset_net(model)
     return matrix, float(loss.detach().cpu())
 
@@ -330,7 +355,7 @@ def _absolute_display_matrices(ls_matrix, baseline_matrix, normalization, np):
     look unrelated.  The difference panel below still communicates which
     model has the larger magnitude.
     """
-    if normalization in ("final-step", "per-neuron"):
+    if normalization in ("final-step", "per-neuron", "signed-global"):
         return ls_matrix, baseline_matrix
     return np.abs(ls_matrix), np.abs(baseline_matrix)
 
@@ -342,20 +367,30 @@ def _final_step_retention_matrix(matrix, np, epsilon=1e-30):
     return absolute / denominator
 
 def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt):
-    from matplotlib.colors import PowerNorm, SymLogNorm
+    from matplotlib.colors import LinearSegmentedColormap, PowerNorm, SymLogNorm
 
     combined = np.concatenate([ls_matrix.ravel(), baseline_matrix.ravel()])
-    limit = float(np.percentile(combined, args.gradient_percentile))
+    limit = (args.gradient_vmax if args.gradient_vmax is not None
+             else float(np.percentile(combined, args.gradient_percentile)))
     if limit <= 0:
         limit = float(combined.max()) if combined.size and combined.max() > 0 else 1.0
     plt.rcParams.update({"font.family": "serif", "font.size": 16, "axes.titleweight": "bold"})
     difference = ls_matrix - baseline_matrix
-    figure, axes = plt.subplots(1, 3, figsize=(args.fig_width, args.fig_height),
+    panel_count = 2 if args.paper_style else 3
+    figure, axes = plt.subplots(1, panel_count, figsize=(args.fig_width, args.fig_height),
                                 sharex=True, sharey=True, constrained_layout=True)
     norm = None
+    difference_image = None
     cmap = _display_cmap(args.normalization)
     image_limits = {"vmin": 0.0, "vmax": limit}
-    if args.normalization == "final-step":
+    if args.normalization == "signed-global":
+        # Match the reference paper's unusual legend: zero is white and both
+        # positive and negative gradients become darker in the same model color.
+        base_color = "#0068a9" if args.paper_style else "#2166ac"
+        cmap = LinearSegmentedColormap.from_list(
+            "zero_centered_blue", [base_color, "#ffffff", base_color])
+        image_limits = {"vmin": -1.0, "vmax": 1.0}
+    elif args.normalization == "final-step":
         # Values are shown in log10 units so each color interval is one order of
         # magnitude: 0.1 -> 0.01 occupies the same span as 0.01 -> 0.001.
         ls_matrix = np.log10(np.maximum(ls_matrix, 1e-30))
@@ -394,7 +429,10 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
         axis.set_xlabel("Time step")
         axis.set_xticks(range(matrix.shape[1]))
         axis.set_xticklabels(range(1, matrix.shape[1] + 1))
-    if args.normalization == "final-step":
+    if args.normalization == "signed-global":
+        difference_limit = 2.0
+        difference_norm = None
+    elif args.normalization == "final-step":
         difference = ls_matrix - baseline_matrix
         difference_limit = float(np.percentile(np.abs(difference), args.gradient_percentile))
         difference_limit = difference_limit if difference_limit > 0 else 1.0
@@ -409,37 +447,42 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
         if difference_limit <= 0:
             difference_limit = float(np.abs(difference).max()) or 1.0
         difference_norm = None
-    difference_kwargs = ({"norm": difference_norm} if difference_norm is not None
-                         else {"vmin": -difference_limit, "vmax": difference_limit})
-    difference_image = axes[2].imshow(
-        difference, aspect="auto", cmap="RdBu_r",
-        interpolation="nearest", origin="upper", **difference_kwargs)
-    axes[2].set_title(
-        "Retention ratio: log10(LS / Non-LS)" if args.normalization == "final-step"
-        else "Difference (LS − Non-LS)", pad=14)
-    axes[2].set_xlabel("Time step")
-    axes[2].set_xticks(range(difference.shape[1]))
-    axes[2].set_xticklabels(range(1, difference.shape[1] + 1))
+    if not args.paper_style:
+        difference_kwargs = ({"norm": difference_norm} if difference_norm is not None
+                             else {"vmin": -difference_limit, "vmax": difference_limit})
+        difference_image = axes[2].imshow(
+            difference, aspect="auto", cmap="RdBu_r",
+            interpolation="nearest", origin="upper", **difference_kwargs)
+        axes[2].set_title(
+            "Retention ratio: log10(LS / Non-LS)" if args.normalization == "final-step"
+            else "Difference (LS − Non-LS)", pad=14)
+        axes[2].set_xlabel("Time step")
+        axes[2].set_xticks(range(difference.shape[1]))
+        axes[2].set_xticklabels(range(1, difference.shape[1] + 1))
     axes[0].set_ylabel("Sampled neuron index")
     target_label = "final-step loss" if args.gradient_target == "final" else "all-step loss"
     source_label = "membrane" if args.gradient_source == "state" else "input"
     figure.suptitle(f"Temporal {source_label}-gradient propagation at {layer} ({target_label})",
                     fontsize=20, fontweight="bold")
     colorbar = figure.colorbar(images[0], ax=axes[:2], shrink=0.88, pad=0.02)
-    if args.normalization == "final-step":
+    if args.normalization == "signed-global":
+        colorbar_label = "Normalized signed gradient value"
+    elif args.normalization == "final-step":
         colorbar_label = "log10(|gradient(t)| / |gradient(final)|)"
     elif args.normalization == "per-neuron":
         colorbar_label = "Per-neuron max-normalized |gradient|"
     else:
         colorbar_label = f"Absolute {source_label} gradient"
     colorbar.set_label(colorbar_label)
-    difference_colorbar = figure.colorbar(difference_image, ax=axes[2], shrink=0.88, pad=0.02)
-    difference_colorbar.set_label(
-        "log10 retention ratio (LS / Non-LS)"
-        if args.normalization == "final-step" else
-        ("Normalized gradient difference (LS − Non-LS)"
-         if args.normalization == "per-neuron" else
-         "Absolute-gradient difference (LS − Non-LS)"))
+    if difference_image is not None:
+        difference_colorbar = figure.colorbar(
+            difference_image, ax=axes[2], shrink=0.88, pad=0.02)
+        difference_colorbar.set_label(
+            "log10 retention ratio (LS / Non-LS)"
+            if args.normalization == "final-step" else
+            ("Normalized gradient difference (LS − Non-LS)"
+             if args.normalization == "per-neuron" else
+             "Absolute-gradient difference (LS − Non-LS)"))
     output_dir.mkdir(parents=True, exist_ok=True)
     figure.savefig(output_dir / "temporal_gradient_comparison.png", dpi=args.dpi,
                    bbox_inches="tight", facecolor="white")
@@ -453,8 +496,12 @@ def build_parser():
     parser.add_argument("--ls-run", required=True, type=Path)
     parser.add_argument("--baseline-run", required=True, type=Path)
     parser.add_argument("--data-dir", type=Path, help="Override the dataset path recorded in args.txt.")
-    parser.add_argument("--layer", default="layer3.6", help="Common neuron layer to inspect.")
+    parser.add_argument("--layer", default="layer3.6",
+                        help="Common neuron layer to inspect, or 'all' to concatenate all "
+                             "LIF/LSLIF layers for a paper-style overview.")
     parser.add_argument("--output-dir", type=Path, default=Path("gradient_analysis"))
+    parser.add_argument("--paper-style", action="store_true",
+                        help="Generate a simple two-panel all-neuron normalized-gradient figure.")
     parser.add_argument("--checkpoint-name", default="checkpoint_max.pth")
     parser.add_argument("--batch-index", type=int, default=0)
     parser.add_argument("--sample-index", type=int, default=0)
@@ -465,15 +512,20 @@ def build_parser():
     parser.add_argument("--horizon-threshold", type=float, default=1e-2,
                         help="Final-step-normalized gradient threshold for effective horizon.")
     parser.add_argument("--gradient-percentile", type=float, default=99.0)
+    parser.add_argument("--gradient-vmax", type=float,
+                        help="Fixed upper color limit for --normalization none; use the same "
+                             "value across runs when comparing absolute gradients.")
     parser.add_argument("--gradient-target", choices=("final", "all"), default="final",
                         help="Backpropagate final-step loss (default) or the training loss at every step.")
     parser.add_argument("--gradient-source", choices=("state", "input"), default="input",
                         help="Inspect the layer input (default), which includes every recurrent "
                              "LS path, or the local pre-spike membrane used for thresholding.")
-    parser.add_argument("--aggregation", choices=("batch-mean-abs", "sample-signed"),
+    parser.add_argument("--aggregation",
+                        choices=("batch-mean-abs", "batch-mean-signed", "sample-signed"),
                         default="batch-mean-abs",
                         help="Aggregate absolute gradients over the fixed batch (default) or one sample.")
-    parser.add_argument("--normalization", choices=("final-step", "per-neuron", "none"),
+    parser.add_argument("--normalization",
+                        choices=("final-step", "per-neuron", "signed-global", "none"),
                         default="final-step",
                         help="Divide every neuron by its final-step gradient (default); "
                              "per-neuron retains the legacy max normalization.")
@@ -494,11 +546,22 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    if args.paper_style:
+        args.layer = "all"
+        args.gradient_target = "final"
+        args.gradient_source = "input"
+        args.aggregation = "batch-mean-signed"
+        args.normalization = "signed-global"
     if min(args.batch_size, args.max_neurons, args.cross_layer_count,
            args.fig_width, args.fig_height, args.dpi) <= 0:
         raise ValueError("Batch size, neuron count, figure dimensions, and DPI must be positive.")
     if not 0 < args.gradient_percentile <= 100:
         raise ValueError("gradient-percentile must be in (0, 100].")
+    if args.gradient_vmax is not None:
+        if args.gradient_vmax <= 0:
+            raise ValueError("gradient-vmax must be positive.")
+        if args.normalization != "none":
+            raise ValueError("gradient-vmax is only valid with --normalization none.")
     if args.normalized_color_gamma <= 0:
         raise ValueError("normalized-color-gamma must be positive.")
     if not 0 < args.difference_linthresh <= 1:
@@ -547,6 +610,13 @@ def main(argv=None):
         baseline_scale = np.max(np.abs(baseline_raw), axis=1, keepdims=True)
         ls_matrix = np.abs(ls_raw) / np.maximum(ls_scale, 1e-30)
         baseline_matrix = np.abs(baseline_raw) / np.maximum(baseline_scale, 1e-30)
+    elif args.normalization == "signed-global":
+        # One shared scale preserves the sign, makes zero exactly white, and
+        # prevents either model from receiving a more favorable normalization.
+        scale = max(float(np.max(np.abs(ls_raw))),
+                    float(np.max(np.abs(baseline_raw))), 1e-30)
+        ls_matrix = ls_raw / scale
+        baseline_matrix = baseline_raw / scale
     else:
         ls_matrix, baseline_matrix = ls_raw, baseline_raw
     ls_matrix, baseline_matrix = _absolute_display_matrices(
@@ -577,6 +647,8 @@ def main(argv=None):
                         gradient_source=np.asarray(args.gradient_source),
                         aggregation=np.asarray(args.aggregation),
                         normalization=np.asarray(args.normalization),
+                        gradient_vmax=np.asarray(
+                            args.gradient_vmax if args.gradient_vmax is not None else np.nan),
                         normalized_color_gamma=np.asarray(args.normalized_color_gamma),
                         difference_linthresh=np.asarray(args.difference_linthresh),
                         color_scale=np.asarray(args.color_scale),
