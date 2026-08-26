@@ -100,6 +100,26 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
                 "--paper-linthresh", "0",
             ])
 
+    def test_cli_accepts_all_neuron_layers(self):
+        args = build_parser().parse_args([
+            "--ls-run", "ls", "--baseline-run", "base", "--layer", "all",
+        ])
+        self.assertEqual(args.layer, "all")
+        self.assertEqual(args.gradient_source, "input")
+
+    def test_cli_accepts_paper_style_overview(self):
+        args = build_parser().parse_args([
+            "--ls-run", "ls", "--baseline-run", "base", "--paper-style",
+        ])
+        self.assertTrue(args.paper_style)
+
+    def test_fixed_gradient_limit_requires_absolute_normalization(self):
+        with self.assertRaisesRegex(ValueError, "only valid"):
+            main([
+                "--ls-run", "ls", "--baseline-run", "base",
+                "--gradient-vmax", "0.1",
+            ])
+
     def test_script_can_start_outside_repository(self):
         script = Path(__file__).with_name("analyze_temporal_gradient.py").resolve()
         with tempfile.TemporaryDirectory() as directory:
