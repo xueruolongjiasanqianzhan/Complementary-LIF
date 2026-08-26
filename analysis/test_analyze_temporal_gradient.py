@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from analysis.analyze_temporal_gradient import (
     _final_step_retention_matrix,
@@ -14,6 +15,7 @@ from analysis.analyze_temporal_gradient import (
     build_parser,
     evenly_spaced_indices,
     load_config,
+    main,
     parse_namespace,
 )
 
@@ -103,6 +105,64 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         np.testing.assert_allclose(retention[:, -1], np.ones(2))
         np.testing.assert_allclose(retention[0], [0.01, 0.1, 1.0])
         np.testing.assert_allclose(np.diff(np.log10(retention[0])), [1.0, 1.0])
+
+    def test_main_end_to_end_generates_only_the_comparison_figure(self):
+        """Exercise main so stale calls to removed plotting helpers cannot ship."""
+        import numpy as np
+
+        config = {
+            "dataset": "DVSCIFAR10", "model": "spiking_vgg11_bn", "T": 3,
+            "neuron_model": "LSLIF", "data_dir": "/unused",
+        }
+        baseline_config = {**config, "neuron_model": "LIF"}
+        class FakeTensor:
+            def __init__(self, values):
+                self.values = np.asarray(values)
+                self.shape = self.values.shape
+
+            def __getitem__(self, item):
+                return FakeTensor(self.values[item])
+
+            def __mul__(self, value):
+                return FakeTensor(self.values * value)
+
+            def numpy(self):
+                return self.values
+
+        gradient = FakeTensor([
+            [1e-3, 1e-2, 1e-1],
+            [1e-4, 1e-3, 1e-2],
+        ])
+        fake_torch = SimpleNamespace(
+            manual_seed=lambda _seed: None,
+            cuda=SimpleNamespace(is_available=lambda: False, manual_seed_all=lambda _seed: None),
+            device=lambda name: name,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "output"
+            with mock.patch.dict(sys.modules, {"torch": fake_torch}), mock.patch(
+                    "analysis.analyze_temporal_gradient.load_config",
+                    side_effect=(config, baseline_config)), mock.patch(
+                    "analysis.analyze_temporal_gradient._require_runtime"), mock.patch(
+                    "analysis.analyze_temporal_gradient._load_test_batch",
+                    return_value=(None, np.asarray([0]))), mock.patch(
+                    "analysis.analyze_temporal_gradient._checkpoint_path",
+                    return_value=Path("checkpoint.pth")), mock.patch(
+                    "analysis.analyze_temporal_gradient._gradient_matrix",
+                    side_effect=((gradient, 1.0), (gradient * 2, 0.5))):
+                result = main([
+                    "--ls-run", "ls", "--baseline-run", "baseline",
+                    "--output-dir", str(output_dir), "--device", "cpu",
+                    "--max-neurons", "2", "--dpi", "72",
+                ])
+
+            self.assertEqual(result, 0)
+            self.assertTrue((output_dir / "temporal_gradient_comparison.png").is_file())
+            self.assertTrue((output_dir / "temporal_gradient_comparison.svg").is_file())
+            self.assertTrue((output_dir / "temporal_gradients.npz").is_file())
+            self.assertEqual(
+                sorted(path.name for path in output_dir.glob("*.png")),
+                ["temporal_gradient_comparison.png"])
 
 
 if __name__ == "__main__":
