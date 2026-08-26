@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from analysis.analyze_temporal_gradient import (
+    _final_step_retention_matrix,
     _display_cmap,
     _install_numpy_legacy_aliases,
     _time_frame,
@@ -44,15 +45,22 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "same T"):
             _validate_pair({**common, "T": 16}, {**common, "T": 8})
 
+    def test_pair_validation_warns_about_weight_decay_mismatch(self):
+        common = {"dataset": "DVSCIFAR10", "model": "spiking_vgg11_bn", "T": 16}
+        with self.assertWarnsRegex(UserWarning, "weight_decay"):
+            _validate_pair(
+                {**common, "weight_decay": 5e-5},
+                {**common, "weight_decay": 5e-4})
+
     def test_cli_defaults_to_middle_vgg_layer(self):
         args = build_parser().parse_args(["--ls-run", "ls", "--baseline-run", "base"])
         self.assertEqual(args.layer, "layer3.6")
         self.assertEqual(args.checkpoint_name, "checkpoint_max.pth")
         self.assertEqual(args.max_neurons, 512)
         self.assertEqual(args.gradient_target, "final")
-        self.assertEqual(args.gradient_source, "state")
+        self.assertEqual(args.gradient_source, "input")
         self.assertEqual(args.aggregation, "batch-mean-abs")
-        self.assertEqual(args.normalization, "per-neuron")
+        self.assertEqual(args.normalization, "final-step")
         self.assertEqual(args.color_scale, "symlog")
         self.assertEqual(args.normalized_color_gamma, 0.35)
         self.assertEqual(args.difference_linthresh, 0.02)
@@ -84,6 +92,15 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
     def test_normalized_heatmap_uses_white_to_blue_colormap(self):
         self.assertEqual(_display_cmap("per-neuron"), "Blues")
         self.assertEqual(_display_cmap("none"), "RdBu_r")
+
+    def test_final_step_matrix_normalization_uses_orders_of_magnitude(self):
+        import numpy as np
+
+        matrix = np.asarray([[1.0, 10.0, 100.0], [0.001, 0.01, 0.1]])
+        retention = _final_step_retention_matrix(matrix, np)
+        np.testing.assert_allclose(retention[:, -1], np.ones(2))
+        np.testing.assert_allclose(retention[0], [0.01, 0.1, 1.0])
+        np.testing.assert_allclose(np.diff(np.log10(retention[0])), [1.0, 1.0])
 
 
 if __name__ == "__main__":
