@@ -316,7 +316,23 @@ def _gradient_matrix(config, checkpoint, batch, layer_name, sample_index,
 
 
 def _display_cmap(normalization):
-    return "Blues" if normalization == "per-neuron" else "RdBu_r"
+    # The two model panels encode gradient strength, not gradient direction.
+    # A sequential map therefore has a truthful ordering (white=weak,
+    # dark blue=strong) and is much easier to compare across adjacent steps.
+    return "Blues"
+
+
+def _absolute_display_matrices(ls_matrix, baseline_matrix, normalization, np):
+    """Return non-negative strengths for the two primary heatmaps.
+
+    ``sample-signed`` remains useful for saving and inspecting the raw tensor,
+    but using its sign in the primary panels makes equally strong gradients
+    look unrelated.  The difference panel below still communicates which
+    model has the larger magnitude.
+    """
+    if normalization in ("final-step", "per-neuron"):
+        return ls_matrix, baseline_matrix
+    return np.abs(ls_matrix), np.abs(baseline_matrix)
 
 
 def _final_step_retention_matrix(matrix, np, epsilon=1e-30):
@@ -328,7 +344,7 @@ def _final_step_retention_matrix(matrix, np, epsilon=1e-30):
 def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt):
     from matplotlib.colors import PowerNorm, SymLogNorm
 
-    combined = np.concatenate([np.abs(ls_matrix).ravel(), np.abs(baseline_matrix).ravel()])
+    combined = np.concatenate([ls_matrix.ravel(), baseline_matrix.ravel()])
     limit = float(np.percentile(combined, args.gradient_percentile))
     if limit <= 0:
         limit = float(combined.max()) if combined.size and combined.max() > 0 else 1.0
@@ -338,7 +354,7 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
                                 sharex=True, sharey=True, constrained_layout=True)
     norm = None
     cmap = _display_cmap(args.normalization)
-    image_limits = {"vmin": -limit, "vmax": limit}
+    image_limits = {"vmin": 0.0, "vmax": limit}
     if args.normalization == "final-step":
         # Values are shown in log10 units so each color interval is one order of
         # magnitude: 0.1 -> 0.01 occupies the same span as 0.01 -> 0.001.
@@ -350,7 +366,7 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
         upper = float(np.percentile(finite, args.gradient_percentile)) if finite.size else 0.0
         if upper <= lower:
             lower, upper = upper - 1.0, upper
-        cmap = "viridis"
+        cmap = "Blues"
         image_limits = {"vmin": lower, "vmax": upper}
     elif args.normalization == "per-neuron":
         # A sequential white-to-blue map makes zero gradients white and uses
@@ -360,12 +376,13 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
         # remain close to white, while weak propagation is still distinguishable.
         norm = PowerNorm(gamma=args.normalized_color_gamma, vmin=0.0, vmax=1.0, clip=True)
         image_limits = {}
-    elif args.color_scale == "symlog":
-        # Temporal gradients often span several orders of magnitude. A shared
-        # symmetric-log scale reveals later steps without normalizing columns
-        # independently or destroying the LS/non-LS magnitude comparison.
-        norm = SymLogNorm(linthresh=max(limit * 1e-3, 1e-30), linscale=1.0,
-                          vmin=-limit, vmax=limit, base=10, clip=True)
+    else:
+        # Keep one shared absolute scale for an honest LS/non-LS comparison,
+        # while compressing its visual dynamic range so a single strong time
+        # step does not turn all neighbouring, weaker steps white.  This also
+        # gives the smooth white-to-blue progression used by paper heatmaps.
+        gamma = args.normalized_color_gamma if args.color_scale == "linear" else 0.2
+        norm = PowerNorm(gamma=gamma, vmin=0.0, vmax=limit, clip=True)
     images = []
     for axis, matrix, title in zip(
             axes[:2], (baseline_matrix, ls_matrix), ("Non-LS (LIF)", "LS (LSLIF)")):
@@ -414,14 +431,15 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
     elif args.normalization == "per-neuron":
         colorbar_label = "Per-neuron max-normalized |gradient|"
     else:
-        colorbar_label = f"{source_label.capitalize()} gradient"
+        colorbar_label = f"Absolute {source_label} gradient"
     colorbar.set_label(colorbar_label)
     difference_colorbar = figure.colorbar(difference_image, ax=axes[2], shrink=0.88, pad=0.02)
     difference_colorbar.set_label(
         "log10 retention ratio (LS / Non-LS)"
         if args.normalization == "final-step" else
         ("Normalized gradient difference (LS − Non-LS)"
-         if args.normalization == "per-neuron" else "Gradient difference (LS − Non-LS)"))
+         if args.normalization == "per-neuron" else
+         "Absolute-gradient difference (LS − Non-LS)"))
     output_dir.mkdir(parents=True, exist_ok=True)
     figure.savefig(output_dir / "temporal_gradient_comparison.png", dpi=args.dpi,
                    bbox_inches="tight", facecolor="white")
@@ -464,7 +482,7 @@ def build_parser():
     parser.add_argument("--difference-linthresh", type=float, default=0.02,
                         help="Near-zero linear range for the normalized difference color scale.")
     parser.add_argument("--color-scale", choices=("symlog", "linear"), default="symlog",
-                        help="Shared signed color scale; symlog reveals small temporal gradients.")
+                        help="Shared magnitude color scale; symlog emphasizes weak gradients.")
     parser.add_argument("--device", help="Default: cuda:0 when available, otherwise cpu.")
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=2022)
@@ -531,6 +549,8 @@ def main(argv=None):
         baseline_matrix = np.abs(baseline_raw) / np.maximum(baseline_scale, 1e-30)
     else:
         ls_matrix, baseline_matrix = ls_raw, baseline_raw
+    ls_matrix, baseline_matrix = _absolute_display_matrices(
+        ls_matrix, baseline_matrix, args.normalization, np)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     # Remove figures from the superseded multi-figure version when reusing an
     # output directory, leaving this run's single comparison figure unambiguous.
