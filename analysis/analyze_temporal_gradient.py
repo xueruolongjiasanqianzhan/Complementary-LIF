@@ -355,7 +355,7 @@ def _absolute_display_matrices(ls_matrix, baseline_matrix, normalization, np):
     look unrelated.  The difference panel below still communicates which
     model has the larger magnitude.
     """
-    if normalization in ("final-step", "per-neuron", "signed-global"):
+    if normalization in ("final-step", "per-neuron", "signed-global", "signed-final-step"):
         return ls_matrix, baseline_matrix
     return np.abs(ls_matrix), np.abs(baseline_matrix)
 
@@ -365,6 +365,18 @@ def _final_step_retention_matrix(matrix, np, epsilon=1e-30):
     absolute = np.abs(matrix)
     denominator = np.maximum(absolute[:, -1:], epsilon)
     return absolute / denominator
+
+
+def _signed_final_step_retention_matrix(matrix, np, relative_epsilon=1e-12):
+    """Divide each neuron's signed gradient by its own final-step magnitude.
+
+    Rows with a numerically zero final-step reference are set to zero rather
+    than amplified by an arbitrary epsilon.
+    """
+    denominator = np.abs(matrix[:, -1:])
+    reference_floor = max(float(np.max(np.abs(matrix))) * relative_epsilon, 1e-30)
+    valid = denominator > reference_floor
+    return np.divide(matrix, denominator, out=np.zeros_like(matrix), where=valid)
 
 def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt):
     from matplotlib.colors import LinearSegmentedColormap, PowerNorm, SymLogNorm
@@ -383,7 +395,7 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
     difference_image = None
     cmap = _display_cmap(args.normalization)
     image_limits = {"vmin": 0.0, "vmax": limit}
-    if args.normalization == "signed-global":
+    if args.normalization in ("signed-global", "signed-final-step"):
         # Match the reference paper's unusual legend: zero is white and both
         # positive and negative gradients become darker in the same model color.
         # SymLogNorm expands weak early gradients without normalizing each time
@@ -391,8 +403,11 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
         base_color = "#0068a9" if args.paper_style else "#2166ac"
         cmap = LinearSegmentedColormap.from_list(
             "zero_centered_blue", [base_color, "#ffffff", base_color])
+        signed_limit = max(1.0, float(np.percentile(
+            np.abs(np.concatenate([ls_matrix.ravel(), baseline_matrix.ravel()])),
+            args.gradient_percentile)))
         norm = SymLogNorm(linthresh=args.paper_linthresh, linscale=0.5,
-                          vmin=-1.0, vmax=1.0, base=10, clip=True)
+                          vmin=-signed_limit, vmax=signed_limit, base=10, clip=True)
         image_limits = {}
     elif args.normalization == "final-step":
         # Values are shown in log10 units so each color interval is one order of
@@ -433,7 +448,7 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
         axis.set_xlabel("Time step")
         axis.set_xticks(range(matrix.shape[1]))
         axis.set_xticklabels(range(1, matrix.shape[1] + 1))
-    if args.normalization == "signed-global":
+    if args.normalization in ("signed-global", "signed-final-step"):
         difference_limit = 2.0
         difference_norm = None
     elif args.normalization == "final-step":
@@ -469,7 +484,9 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
     figure.suptitle(f"Temporal {source_label}-gradient propagation at {layer} ({target_label})",
                     fontsize=20, fontweight="bold")
     colorbar = figure.colorbar(images[0], ax=axes[:2], shrink=0.88, pad=0.02)
-    if args.normalization == "signed-global":
+    if args.normalization == "signed-final-step":
+        colorbar_label = "Signed gradient / |gradient(final)|"
+    elif args.normalization == "signed-global":
         colorbar_label = "Normalized signed gradient value"
     elif args.normalization == "final-step":
         colorbar_label = "log10(|gradient(t)| / |gradient(final)|)"
@@ -532,7 +549,8 @@ def build_parser():
                         default="batch-mean-abs",
                         help="Aggregate absolute gradients over the fixed batch (default) or one sample.")
     parser.add_argument("--normalization",
-                        choices=("final-step", "per-neuron", "signed-global", "none"),
+                        choices=("final-step", "per-neuron", "signed-final-step",
+                                 "signed-global", "none"),
                         default="final-step",
                         help="Divide every neuron by its final-step gradient (default); "
                              "per-neuron retains the legacy max normalization.")
@@ -558,7 +576,7 @@ def main(argv=None):
         args.gradient_target = "final"
         args.gradient_source = "input"
         args.aggregation = "batch-mean-signed"
-        args.normalization = "signed-global"
+        args.normalization = "signed-final-step"
     if min(args.batch_size, args.max_neurons, args.cross_layer_count,
            args.fig_width, args.fig_height, args.dpi) <= 0:
         raise ValueError("Batch size, neuron count, figure dimensions, and DPI must be positive.")
@@ -614,6 +632,9 @@ def main(argv=None):
     if args.normalization == "final-step":
         ls_matrix = _final_step_retention_matrix(ls_raw, np)
         baseline_matrix = _final_step_retention_matrix(baseline_raw, np)
+    elif args.normalization == "signed-final-step":
+        ls_matrix = _signed_final_step_retention_matrix(ls_raw, np)
+        baseline_matrix = _signed_final_step_retention_matrix(baseline_raw, np)
     elif args.normalization == "per-neuron":
         ls_scale = np.max(np.abs(ls_raw), axis=1, keepdims=True)
         baseline_scale = np.max(np.abs(baseline_raw), axis=1, keepdims=True)

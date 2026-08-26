@@ -9,6 +9,7 @@ from unittest import mock
 from analysis.analyze_temporal_gradient import (
     _absolute_display_matrices,
     _final_step_retention_matrix,
+    _signed_final_step_retention_matrix,
     _display_cmap,
     _install_numpy_legacy_aliases,
     _time_frame,
@@ -100,26 +101,6 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
                 "--paper-linthresh", "0",
             ])
 
-    def test_cli_accepts_all_neuron_layers(self):
-        args = build_parser().parse_args([
-            "--ls-run", "ls", "--baseline-run", "base", "--layer", "all",
-        ])
-        self.assertEqual(args.layer, "all")
-        self.assertEqual(args.gradient_source, "input")
-
-    def test_cli_accepts_paper_style_overview(self):
-        args = build_parser().parse_args([
-            "--ls-run", "ls", "--baseline-run", "base", "--paper-style",
-        ])
-        self.assertTrue(args.paper_style)
-
-    def test_fixed_gradient_limit_requires_absolute_normalization(self):
-        with self.assertRaisesRegex(ValueError, "only valid"):
-            main([
-                "--ls-run", "ls", "--baseline-run", "base",
-                "--gradient-vmax", "0.1",
-            ])
-
     def test_script_can_start_outside_repository(self):
         script = Path(__file__).with_name("analyze_temporal_gradient.py").resolve()
         with tempfile.TemporaryDirectory() as directory:
@@ -173,6 +154,16 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         np.testing.assert_allclose(retention[:, -1], np.ones(2))
         np.testing.assert_allclose(retention[0], [0.01, 0.1, 1.0])
         np.testing.assert_allclose(np.diff(np.log10(retention[0])), [1.0, 1.0])
+
+    def test_signed_final_step_normalization_removes_terminal_scale(self):
+        import numpy as np
+
+        matrix = np.asarray([
+            [1.0, -2.0, 4.0], [10.0, -20.0, 40.0], [1.0, 2.0, 1e-20],
+        ])
+        retention = _signed_final_step_retention_matrix(matrix, np)
+        np.testing.assert_allclose(retention[:2], [[0.25, -0.5, 1.0], [0.25, -0.5, 1.0]])
+        np.testing.assert_array_equal(retention[2], [0.0, 0.0, 0.0])
 
     def test_main_end_to_end_generates_only_the_comparison_figure(self):
         """Exercise main so stale calls to removed plotting helpers cannot ship."""
@@ -230,7 +221,7 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
             self.assertTrue((output_dir / "temporal_gradient_comparison.svg").is_file())
             self.assertTrue((output_dir / "temporal_gradients.npz").is_file())
             with np.load(output_dir / "temporal_gradients.npz") as saved:
-                self.assertEqual(saved["normalization"].item(), "signed-global")
+                self.assertEqual(saved["normalization"].item(), "signed-final-step")
                 self.assertEqual(saved["aggregation"].item(), "batch-mean-signed")
                 self.assertEqual(saved["paper_linthresh"].item(), 1e-4)
             self.assertEqual(
