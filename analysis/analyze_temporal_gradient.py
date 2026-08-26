@@ -562,45 +562,6 @@ def main(argv=None):
                         color_scale=np.asarray(args.color_scale),
                         ls_loss=np.asarray(ls_loss), baseline_loss=np.asarray(baseline_loss))
     _plot(ls_matrix, baseline_matrix, indices, args.layer, args.output_dir, args, np, plt)
-    summaries = _plot_profile_comparisons(
-        ls_raw, baseline_raw, args.output_dir, args, np, plt)
-
-    ls_layers = _neuron_layer_names(ls_config, device)
-    baseline_layers = _neuron_layer_names(baseline_config, device)
-    common_layers = [name for name in baseline_layers if name in set(ls_layers)]
-    if not common_layers:
-        raise ValueError("The LS and baseline models have no common neuron-layer names.")
-    cross_indices = evenly_spaced_indices(len(common_layers), args.cross_layer_count)
-    cross_layers = [common_layers[index] for index in cross_indices]
-    if args.layer not in cross_layers:
-        cross_layers.append(args.layer)
-    cross_ls_profiles, cross_baseline_profiles = [], []
-    for layer_name in cross_layers:
-        if layer_name == args.layer:
-            layer_ls_raw, layer_baseline_raw = ls_raw, baseline_raw
-        else:
-            layer_baseline, _ = _gradient_matrix(
-                baseline_config, baseline_checkpoint, batch, layer_name, args.sample_index,
-                args.gradient_target, args.gradient_source, args.aggregation, device, torch)
-            layer_ls, _ = _gradient_matrix(
-                ls_config, ls_checkpoint, batch, layer_name, args.sample_index,
-                args.gradient_target, args.gradient_source, args.aggregation, device, torch)
-            layer_indices = evenly_spaced_indices(layer_ls.shape[0], args.max_neurons)
-            layer_ls_raw = layer_ls[layer_indices].numpy()
-            layer_baseline_raw = layer_baseline[layer_indices].numpy()
-        cross_ls_profiles.append(_absolute_profile(layer_ls_raw, np))
-        cross_baseline_profiles.append(_absolute_profile(layer_baseline_raw, np))
-    cross_ratio = _plot_cross_layer(
-        cross_layers, cross_ls_profiles, cross_baseline_profiles,
-        args.output_dir, args, np, plt)
-    np.savez_compressed(
-        args.output_dir / "temporal_gradient_summaries.npz",
-        **{key: np.asarray(value) for key, value in summaries.items()},
-        cross_layer_names=np.asarray(cross_layers),
-        cross_layer_ls_profiles=np.stack(cross_ls_profiles),
-        cross_layer_baseline_profiles=np.stack(cross_baseline_profiles),
-        cross_layer_log10_ratio=cross_ratio,
-        horizon_threshold=np.asarray(args.horizon_threshold))
     print(f"Saved temporal-gradient comparison to {args.output_dir}")
     print(f"Layer={args.layer}, neurons={len(indices)}, time_steps={ls_matrix.shape[1]}, "
           f"baseline_loss={baseline_loss:.6f}, ls_loss={ls_loss:.6f}")
