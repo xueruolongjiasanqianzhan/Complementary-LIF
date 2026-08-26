@@ -3,6 +3,7 @@
 
 import argparse
 import csv
+import io
 from pathlib import Path
 
 import matplotlib
@@ -20,12 +21,37 @@ REQUIRED_COLUMNS = (
 
 
 def load_trace(path: Path):
-    with path.open(newline='', encoding='utf-8') as handle:
-        reader = csv.DictReader(handle)
-        missing = [name for name in REQUIRED_COLUMNS if name not in (reader.fieldnames or [])]
-        if missing:
-            raise ValueError(f'Missing required CSV columns: {missing}')
-        rows = list(reader)
+    text = path.read_text(encoding='utf-8-sig')
+    # Text copied from a terminal/chat is sometimes saved with the two literal
+    # characters ``\n`` instead of real line breaks. Accept that representation
+    # rather than reporting that every CSV column is missing.
+    if '\\n' in text and text.count('\n') <= 1:
+        text = text.replace('\\r\\n', '\n').replace('\\n', '\n')
+    lines = text.splitlines()
+    if lines and lines[0].strip().lower() in {'```', '```csv'}:
+        lines = lines[1:]
+    if lines and lines[-1].strip() == '```':
+        lines = lines[:-1]
+    text = '\n'.join(lines)
+
+    sample = text[:4096]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=',\t;')
+    except csv.Error:
+        dialect = csv.excel
+    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    fieldnames = [str(name).strip() for name in (reader.fieldnames or [])]
+    missing = [name for name in REQUIRED_COLUMNS if name not in fieldnames]
+    if missing:
+        raise ValueError(
+            f'Missing required CSV columns: {missing}. '
+            f'Detected columns: {fieldnames}. '
+            'Make sure the first row is the comma-separated header and that the file contains real newlines.'
+        )
+    rows = [
+        {str(key).strip(): value for key, value in row.items() if key is not None}
+        for row in reader
+    ]
     if not rows:
         raise ValueError(f'Trace CSV is empty: {path}')
     return {name: np.asarray([float(row[name]) for row in rows]) for name in REQUIRED_COLUMNS}
