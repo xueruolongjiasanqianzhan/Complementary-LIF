@@ -59,6 +59,8 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         self.assertEqual(args.layer, "layer3.6")
         self.assertEqual(args.checkpoint_name, "checkpoint_max.pth")
         self.assertEqual(args.max_neurons, 512)
+        self.assertEqual(args.cross_layer_count, 5)
+        self.assertEqual(args.horizon_threshold, 1e-2)
         self.assertEqual(args.gradient_target, "final")
         self.assertEqual(args.gradient_source, "input")
         self.assertEqual(args.aggregation, "batch-mean-abs")
