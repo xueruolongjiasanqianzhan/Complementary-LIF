@@ -71,6 +71,34 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         self.assertEqual(args.normalized_color_gamma, 0.35)
         self.assertEqual(args.difference_linthresh, 0.02)
         self.assertEqual(args.fig_width, 21.0)
+        self.assertEqual(args.paper_linthresh, 1e-4)
+
+    def test_cli_accepts_all_neuron_layers(self):
+        args = build_parser().parse_args([
+            "--ls-run", "ls", "--baseline-run", "base", "--layer", "all",
+        ])
+        self.assertEqual(args.layer, "all")
+        self.assertEqual(args.gradient_source, "input")
+
+    def test_cli_accepts_paper_style_overview(self):
+        args = build_parser().parse_args([
+            "--ls-run", "ls", "--baseline-run", "base", "--paper-style",
+        ])
+        self.assertTrue(args.paper_style)
+
+    def test_fixed_gradient_limit_requires_absolute_normalization(self):
+        with self.assertRaisesRegex(ValueError, "only valid"):
+            main([
+                "--ls-run", "ls", "--baseline-run", "base",
+                "--gradient-vmax", "0.1",
+            ])
+
+    def test_paper_linthresh_must_be_between_zero_and_one(self):
+        with self.assertRaisesRegex(ValueError, "paper-linthresh"):
+            main([
+                "--ls-run", "ls", "--baseline-run", "base",
+                "--paper-linthresh", "0",
+            ])
 
     def test_cli_accepts_all_neuron_layers(self):
         args = build_parser().parse_args([
@@ -204,6 +232,7 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
             with np.load(output_dir / "temporal_gradients.npz") as saved:
                 self.assertEqual(saved["normalization"].item(), "signed-global")
                 self.assertEqual(saved["aggregation"].item(), "batch-mean-signed")
+                self.assertEqual(saved["paper_linthresh"].item(), 1e-4)
             self.assertEqual(
                 sorted(path.name for path in output_dir.glob("*.png")),
                 ["temporal_gradient_comparison.png"])

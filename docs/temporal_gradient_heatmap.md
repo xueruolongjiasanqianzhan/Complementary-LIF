@@ -167,6 +167,7 @@ python analysis/analyze_temporal_gradient.py \
   --baseline-run /path/to/LIF/experiment \
   --data-dir /path/to/CIFAR10DVS \
   --paper-style \
+  --paper-linthresh 1e-4 \
   --output-dir gradient_analysis/paper_style
 ```
 
@@ -176,6 +177,12 @@ batch 内对**有符号梯度**求均值，再用两个模型共同的最大绝�
 以 0 为中心的对称色标。0 是白色，正负梯度离 0 越远颜色都越深。若 LS 面板有更多颜色延伸到早期时间步，
 说明在这个 batch 中 LS 的相对梯度保持得更久。这是与 Rhythm-SNN 图相同的观察思路，适合
 快速诊断，但单个 batch 的图只能作为现象展示。
+
+颜色使用以 0 为中心的 symmetric-log 映射，而不是线性等比例映射：接近 0 的
+`[-paper-linthresh, +paper-linthresh]` 保持线性，区间外按数量级展开，所以微弱的早期梯度
+仍能显示出来，同时不会改变原始矩阵或抹掉时间衰减。默认 `--paper-linthresh 1e-4`；若早期
+仍几乎全白，可依次尝试 `1e-5`、`1e-6`。不建议按每个时间步分别归一化，因为那会强制每列
+都出现深色，失去判断“梯度是否随回溯时间衰减”的依据。
 
 这个初步实验**没有必要先比较绝对梯度，也不应人为把两个模型的初始梯度设成一样**。
 分类损失产生的末端梯度本来就受两个已训练模型的输出与置信度影响；强行改成相同数值会把

@@ -386,10 +386,14 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
     if args.normalization == "signed-global":
         # Match the reference paper's unusual legend: zero is white and both
         # positive and negative gradients become darker in the same model color.
+        # SymLogNorm expands weak early gradients without normalizing each time
+        # column independently (which would erase temporal decay itself).
         base_color = "#0068a9" if args.paper_style else "#2166ac"
         cmap = LinearSegmentedColormap.from_list(
             "zero_centered_blue", [base_color, "#ffffff", base_color])
-        image_limits = {"vmin": -1.0, "vmax": 1.0}
+        norm = SymLogNorm(linthresh=args.paper_linthresh, linscale=0.5,
+                          vmin=-1.0, vmax=1.0, base=10, clip=True)
+        image_limits = {}
     elif args.normalization == "final-step":
         # Values are shown in log10 units so each color interval is one order of
         # magnitude: 0.1 -> 0.01 occupies the same span as 0.01 -> 0.001.
@@ -502,6 +506,9 @@ def build_parser():
     parser.add_argument("--output-dir", type=Path, default=Path("gradient_analysis"))
     parser.add_argument("--paper-style", action="store_true",
                         help="Generate a simple two-panel all-neuron normalized-gradient figure.")
+    parser.add_argument("--paper-linthresh", type=float, default=1e-4,
+                        help="Linear half-width around zero in the paper-style symmetric-log "
+                             "color scale; smaller values reveal weaker gradients.")
     parser.add_argument("--checkpoint-name", default="checkpoint_max.pth")
     parser.add_argument("--batch-index", type=int, default=0)
     parser.add_argument("--sample-index", type=int, default=0)
@@ -564,6 +571,8 @@ def main(argv=None):
             raise ValueError("gradient-vmax is only valid with --normalization none.")
     if args.normalized_color_gamma <= 0:
         raise ValueError("normalized-color-gamma must be positive.")
+    if not 0 < args.paper_linthresh < 1:
+        raise ValueError("paper-linthresh must be in (0, 1).")
     if not 0 < args.difference_linthresh <= 1:
         raise ValueError("difference-linthresh must be in (0, 1].")
     if not 0 < args.horizon_threshold <= 1:
@@ -652,6 +661,7 @@ def main(argv=None):
                         normalized_color_gamma=np.asarray(args.normalized_color_gamma),
                         difference_linthresh=np.asarray(args.difference_linthresh),
                         color_scale=np.asarray(args.color_scale),
+                        paper_linthresh=np.asarray(args.paper_linthresh),
                         ls_loss=np.asarray(ls_loss), baseline_loss=np.asarray(baseline_loss))
     _plot(ls_matrix, baseline_matrix, indices, args.layer, args.output_dir, args, np, plt)
     print(f"Saved temporal-gradient comparison to {args.output_dir}")
