@@ -328,6 +328,9 @@ def _gradient_matrix(config, checkpoint, batch, layer_name, sample_index,
         if aggregation == "batch-mean-abs":
             columns = [value.grad.detach().abs().mean(dim=0).reshape(-1).cpu()
                        for value in values]
+        elif aggregation == "batch-mean-signed":
+            columns = [value.grad.detach().mean(dim=0).reshape(-1).cpu()
+                       for value in values]
         else:
             columns = [value.grad[sample_index].detach().reshape(-1).cpu()
                        for value in values]
@@ -352,7 +355,7 @@ def _absolute_display_matrices(ls_matrix, baseline_matrix, normalization, np):
     look unrelated.  The difference panel below still communicates which
     model has the larger magnitude.
     """
-    if normalization in ("final-step", "per-neuron"):
+    if normalization in ("final-step", "per-neuron", "signed-global"):
         return ls_matrix, baseline_matrix
     return np.abs(ls_matrix), np.abs(baseline_matrix)
 
@@ -364,7 +367,7 @@ def _final_step_retention_matrix(matrix, np, epsilon=1e-30):
     return absolute / denominator
 
 def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt):
-    from matplotlib.colors import PowerNorm, SymLogNorm
+    from matplotlib.colors import LinearSegmentedColormap, PowerNorm, SymLogNorm
 
     combined = np.concatenate([ls_matrix.ravel(), baseline_matrix.ravel()])
     limit = (args.gradient_vmax if args.gradient_vmax is not None
@@ -380,7 +383,14 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
     difference_image = None
     cmap = _display_cmap(args.normalization)
     image_limits = {"vmin": 0.0, "vmax": limit}
-    if args.normalization == "final-step":
+    if args.normalization == "signed-global":
+        # Match the reference paper's unusual legend: zero is white and both
+        # positive and negative gradients become darker in the same model color.
+        base_color = "#0068a9" if args.paper_style else "#2166ac"
+        cmap = LinearSegmentedColormap.from_list(
+            "zero_centered_blue", [base_color, "#ffffff", base_color])
+        image_limits = {"vmin": -1.0, "vmax": 1.0}
+    elif args.normalization == "final-step":
         # Values are shown in log10 units so each color interval is one order of
         # magnitude: 0.1 -> 0.01 occupies the same span as 0.01 -> 0.001.
         ls_matrix = np.log10(np.maximum(ls_matrix, 1e-30))
@@ -419,7 +429,10 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
         axis.set_xlabel("Time step")
         axis.set_xticks(range(matrix.shape[1]))
         axis.set_xticklabels(range(1, matrix.shape[1] + 1))
-    if args.normalization == "final-step":
+    if args.normalization == "signed-global":
+        difference_limit = 2.0
+        difference_norm = None
+    elif args.normalization == "final-step":
         difference = ls_matrix - baseline_matrix
         difference_limit = float(np.percentile(np.abs(difference), args.gradient_percentile))
         difference_limit = difference_limit if difference_limit > 0 else 1.0
@@ -452,7 +465,9 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
     figure.suptitle(f"Temporal {source_label}-gradient propagation at {layer} ({target_label})",
                     fontsize=20, fontweight="bold")
     colorbar = figure.colorbar(images[0], ax=axes[:2], shrink=0.88, pad=0.02)
-    if args.normalization == "final-step":
+    if args.normalization == "signed-global":
+        colorbar_label = "Normalized signed gradient value"
+    elif args.normalization == "final-step":
         colorbar_label = "log10(|gradient(t)| / |gradient(final)|)"
     elif args.normalization == "per-neuron":
         colorbar_label = "Per-neuron max-normalized |gradient|"
@@ -505,10 +520,12 @@ def build_parser():
     parser.add_argument("--gradient-source", choices=("state", "input"), default="input",
                         help="Inspect the layer input (default), which includes every recurrent "
                              "LS path, or the local pre-spike membrane used for thresholding.")
-    parser.add_argument("--aggregation", choices=("batch-mean-abs", "sample-signed"),
+    parser.add_argument("--aggregation",
+                        choices=("batch-mean-abs", "batch-mean-signed", "sample-signed"),
                         default="batch-mean-abs",
                         help="Aggregate absolute gradients over the fixed batch (default) or one sample.")
-    parser.add_argument("--normalization", choices=("final-step", "per-neuron", "none"),
+    parser.add_argument("--normalization",
+                        choices=("final-step", "per-neuron", "signed-global", "none"),
                         default="final-step",
                         help="Divide every neuron by its final-step gradient (default); "
                              "per-neuron retains the legacy max normalization.")
@@ -533,8 +550,8 @@ def main(argv=None):
         args.layer = "all"
         args.gradient_target = "final"
         args.gradient_source = "input"
-        args.aggregation = "batch-mean-abs"
-        args.normalization = "final-step"
+        args.aggregation = "batch-mean-signed"
+        args.normalization = "signed-global"
     if min(args.batch_size, args.max_neurons, args.cross_layer_count,
            args.fig_width, args.fig_height, args.dpi) <= 0:
         raise ValueError("Batch size, neuron count, figure dimensions, and DPI must be positive.")
@@ -593,6 +610,13 @@ def main(argv=None):
         baseline_scale = np.max(np.abs(baseline_raw), axis=1, keepdims=True)
         ls_matrix = np.abs(ls_raw) / np.maximum(ls_scale, 1e-30)
         baseline_matrix = np.abs(baseline_raw) / np.maximum(baseline_scale, 1e-30)
+    elif args.normalization == "signed-global":
+        # One shared scale preserves the sign, makes zero exactly white, and
+        # prevents either model from receiving a more favorable normalization.
+        scale = max(float(np.max(np.abs(ls_raw))),
+                    float(np.max(np.abs(baseline_raw))), 1e-30)
+        ls_matrix = ls_raw / scale
+        baseline_matrix = baseline_raw / scale
     else:
         ls_matrix, baseline_matrix = ls_raw, baseline_raw
     ls_matrix, baseline_matrix = _absolute_display_matrices(

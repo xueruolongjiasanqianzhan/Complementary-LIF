@@ -82,7 +82,7 @@ dropout 不一致，工具会输出显式警告。它仍允许生成探索性图
 - `temporal_gradient_summary.{png,svg}`：指定层的 log10 梯度衰减斜率和有效梯度时间跨度。
 - `cross_layer_gradient_ratio.{png,svg}`：多个均匀采样层的
   `log10(LS mean-|gradient| / Non-LS mean-|gradient|)` 时间热力图。
-- `temporal_gradients.npz`：同时保存 `*_gradient_raw` 原始/批平均绝对梯度和
+- `temporal_gradients.npz`：同时保存 `*_gradient_raw` 原始/批聚合梯度和
   `*_gradient_display` 非负绘图矩阵，以及真实神经元索引和诊断元数据。即使选择
   `sample-signed`，`*_gradient_raw` 仍保留符号，而 `*_gradient_display` 保存主图所用绝对值。
   `retention_log10_ratio` 保存第三个面板使用的 LS/Non-LS 保持率 log10 比值。
@@ -170,17 +170,18 @@ python analysis/analyze_temporal_gradient.py \
   --output-dir gradient_analysis/paper_style
 ```
 
-`--paper-style` 自动使用所有 LIF/LSLIF 层、最终时间步损失、共同的层输入节点、batch
-平均绝对梯度和最终步归一化，并只画 LIF 与 LS 两个面板。横轴是时间，纵轴是按模型注册
-顺序拼接后均匀采样的隐含神经元；两幅图共用色标。若 LS 面板有更多颜色延伸到早期时间步，
+`--paper-style` 自动使用所有 LIF/LSLIF 层、最终时间步损失和共同的层输入节点；它先在
+batch 内对**有符号梯度**求均值，再用两个模型共同的最大绝对值归一化，并只画 LIF 与 LS
+两个面板。横轴是时间，纵轴是按模型注册顺序拼接后均匀采样的隐含神经元；两幅图共用
+以 0 为中心的对称色标。0 是白色，正负梯度离 0 越远颜色都越深。若 LS 面板有更多颜色延伸到早期时间步，
 说明在这个 batch 中 LS 的相对梯度保持得更久。这是与 Rhythm-SNN 图相同的观察思路，适合
 快速诊断，但单个 batch 的图只能作为现象展示。
 
 这个初步实验**没有必要先比较绝对梯度，也不应人为把两个模型的初始梯度设成一样**。
 分类损失产生的末端梯度本来就受两个已训练模型的输出与置信度影响；强行改成相同数值会把
 实验改成“固定外部反传信号下比较 Jacobian”，不再是模型在真实任务损失下的自然梯度。
-逐神经元除以自身最终时间步梯度，正是为了消除这部分起点尺度差异，重点比较从晚期向早期
-传播时衰减得有多快。
+这里用同一个全局因子缩放 LIF 和 LS，不会分别把两张图调到同样深；因此既保留时间上的
+自然衰减，也保证 0 对应白色和两个模型的颜色可比。
 
 只有当论文结论要进一步写成“LS 的绝对梯度更大”时，才需要补充绝对梯度实验。此时不要
 修改梯度，而应保留真实 loss，使用 `--normalization none --gradient-vmax VALUE`，并让所有

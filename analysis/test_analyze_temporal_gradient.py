@@ -128,6 +128,15 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         np.testing.assert_array_equal(ls, [[2.0, 1.0]])
         np.testing.assert_array_equal(baseline, [[3.0, 4.0]])
 
+    def test_signed_global_display_preserves_both_gradient_directions(self):
+        import numpy as np
+
+        ls, baseline = _absolute_display_matrices(
+            np.asarray([[-1.0, 0.0, 1.0]]),
+            np.asarray([[1.0, 0.0, -1.0]]), "signed-global", np)
+        np.testing.assert_array_equal(ls, [[-1.0, 0.0, 1.0]])
+        np.testing.assert_array_equal(baseline, [[1.0, 0.0, -1.0]])
+
     def test_final_step_matrix_normalization_uses_orders_of_magnitude(self):
         import numpy as np
 
@@ -192,6 +201,9 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
             self.assertTrue((output_dir / "temporal_gradient_comparison.png").is_file())
             self.assertTrue((output_dir / "temporal_gradient_comparison.svg").is_file())
             self.assertTrue((output_dir / "temporal_gradients.npz").is_file())
+            with np.load(output_dir / "temporal_gradients.npz") as saved:
+                self.assertEqual(saved["normalization"].item(), "signed-global")
+                self.assertEqual(saved["aggregation"].item(), "batch-mean-signed")
             self.assertEqual(
                 sorted(path.name for path in output_dir.glob("*.png")),
                 ["temporal_gradient_comparison.png"])
