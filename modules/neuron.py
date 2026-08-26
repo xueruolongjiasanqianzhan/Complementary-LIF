@@ -539,12 +539,52 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
         self.n = None
         self.has_fired = None
         self.step_count = 0
+        # Evaluation-only controls used by the history-branch intervention
+        # experiment. Plain attributes keep checkpoints backward compatible.
+        self.history_intervention = 'normal'
+        self.history_intervention_shift = 1
+        self._history_intervention_buffer = []
 
     def reset(self):
         self.v = None
         self.n = None
         self.has_fired = None
         self.step_count = 0
+        self._history_intervention_buffer = []
+
+    def set_history_intervention(self, mode: str = 'normal', shift: int = 1):
+        """Configure an evaluation-time intervention on the fused history term.
+
+        ``shuffle`` deterministically rolls the batch by one sample, preserving
+        values while breaking sample correspondence. ``time_shift`` delays the
+        term by ``shift`` steps and emits zeros until enough history exists.
+        """
+        mode = str(mode).lower()
+        if mode not in {'normal', 'zero', 'shuffle', 'time_shift'}:
+            raise ValueError(f'Unsupported history intervention: {mode}')
+        if int(shift) < 1:
+            raise ValueError(f'history intervention shift must be >= 1, got {shift}')
+        self.history_intervention = mode
+        self.history_intervention_shift = int(shift)
+        self._history_intervention_buffer = []
+
+    def _intervene_history_term(self, history_term: torch.Tensor) -> torch.Tensor:
+        mode = self.history_intervention
+        if mode == 'normal':
+            return history_term
+        if mode == 'zero':
+            return torch.zeros_like(history_term)
+        if mode == 'shuffle':
+            if history_term.shape[0] < 2:
+                raise ValueError('shuffle history intervention requires batch size >= 2')
+            return torch.roll(history_term, shifts=1, dims=0)
+        if mode == 'time_shift':
+            self._history_intervention_buffer.append(history_term)
+            if len(self._history_intervention_buffer) <= self.history_intervention_shift:
+                return torch.zeros_like(history_term)
+            delayed = self._history_intervention_buffer.pop(0)
+            return delayed
+        raise RuntimeError(f'Unexpected history intervention: {mode}')
 
     def _ensure_state(self, x: torch.Tensor):
         need_init = (
@@ -603,6 +643,7 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
         history_term = history_weight * (n_t / norm)
         if self.history_mode == 'post_spike':
             history_term = history_term * self.has_fired.to(dtype=history_term.dtype)
+        history_term = self._intervene_history_term(history_term)
         total_mem = m_t + history_term
         # Keep diagnostics opt-in: retaining this intermediate during ordinary
         # training would unnecessarily extend the autograd graph's lifetime.

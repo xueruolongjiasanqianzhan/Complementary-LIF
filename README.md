@@ -55,6 +55,13 @@ CIFAR-10, CIFAR-100, Tiny-Imagenet, DVS-CIFAR10, and DVS-Gesture:
 
 LSLIF4 uses the same dataset/model commands; only switch the neuron option to ``-neuron_model LSLIF4``:
 
+For a hypothesis-driven LS evaluation plan (causal branch interventions,
+long-delay generalization, reset-pressure controls, ablations, statistics, and
+energy reporting), see [the LS experiment roadmap](docs/LS_experiment_roadmap.md).
+The first checkpoint-only history intervention is implemented in
+[`analysis/history_branch_intervention_eval.py`](analysis/history_branch_intervention_eval.py),
+with usage and interpretation documented [here](docs/history_branch_intervention.md).
+
     # CIFAR-10 with LSLIF4
     python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF4
 
