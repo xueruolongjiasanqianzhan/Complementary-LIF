@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Compare temporal gradients from LS and non-LS checkpoints.
+"""Compare final-step-normalized temporal gradients from two checkpoints.
 
-The command does not train or update either model.  It performs one diagnostic
-forward/backward pass for the requested layer and additional passes for a small,
-evenly spaced set of layers used by the cross-layer summary.
+The command performs one diagnostic forward/backward pass per checkpoint; it
+does not train or update either model.
 """
 
 import argparse
@@ -12,6 +11,7 @@ import importlib.util
 import json
 import random
 import sys
+import warnings
 from pathlib import Path
 
 
@@ -107,6 +107,14 @@ def _validate_pair(ls_config, baseline_config):
     for key in ("loss_lambda", "mse_n_reg", "loss_means", "label_smoothing"):
         if ls_config.get(key, 0) != baseline_config.get(key, 0):
             raise ValueError(f"Loss setting {key} differs between the two experiments.")
+    mismatches = []
+    for key in ("seed", "opt", "lr", "lr_scheduler", "weight_decay", "epochs", "b", "drop_rate"):
+        if key in ls_config and key in baseline_config and ls_config[key] != baseline_config[key]:
+            mismatches.append(f"{key}={ls_config[key]!r} vs {baseline_config[key]!r}")
+    if mismatches:
+        warnings.warn(
+            "LS and baseline training settings differ; gradient differences cannot be attributed "
+            "to LS alone: " + ", ".join(mismatches), UserWarning, stacklevel=2)
 
 
 def _require_runtime():
@@ -311,109 +319,11 @@ def _display_cmap(normalization):
     return "Blues" if normalization == "per-neuron" else "RdBu_r"
 
 
-def _absolute_profile(matrix, np):
-    """Aggregate a neuron-by-time raw gradient matrix without display normalization."""
-    return np.mean(np.abs(matrix), axis=0)
-
-
-def _retention_profile(profile, epsilon=1e-30):
-    """Return gradient magnitude relative to the final time step."""
-    denominator = max(float(profile[-1]), epsilon)
-    return profile / denominator
-
-
-def _gradient_summary(matrix, np, threshold=1e-2):
-    """Summarize temporal decay using a log-linear slope and effective horizon."""
-    profile = _absolute_profile(matrix, np)
-    retention = _retention_profile(profile)
-    distance = np.arange(profile.size - 1, -1, -1, dtype=float)
-    valid = np.isfinite(profile) & (profile > 0)
-    slope = float(np.polyfit(distance[valid], np.log10(profile[valid]), 1)[0]) \
-        if np.count_nonzero(valid) >= 2 else float("nan")
-    retained = distance[retention >= threshold]
-    horizon = float(retained.max()) if retained.size else 0.0
-    return profile, retention, slope, horizon
-
-
-def _save_figure(figure, output_dir, stem, dpi, plt):
-    figure.savefig(output_dir / f"{stem}.png", dpi=dpi, bbox_inches="tight", facecolor="white")
-    figure.savefig(output_dir / f"{stem}.svg", bbox_inches="tight", facecolor="white")
-    plt.close(figure)
-
-
-def _plot_profile_comparisons(ls_raw, baseline_raw, output_dir, args, np, plt):
-    """Write separate absolute-profile, retention, and scalar-summary figures."""
-    ls_profile, ls_retention, ls_slope, ls_horizon = _gradient_summary(
-        ls_raw, np, args.horizon_threshold)
-    base_profile, base_retention, base_slope, base_horizon = _gradient_summary(
-        baseline_raw, np, args.horizon_threshold)
-    steps = np.arange(1, ls_profile.size + 1)
-
-    figure, axis = plt.subplots(figsize=(8.5, 5.2), constrained_layout=True)
-    axis.semilogy(steps, np.maximum(base_profile, 1e-30), "o-", label="Non-LS (LIF)")
-    axis.semilogy(steps, np.maximum(ls_profile, 1e-30), "o-", label="LS (LSLIF)")
-    axis.set(xlabel="Time step", ylabel="Mean absolute gradient",
-             title="Absolute temporal gradient profile")
-    axis.grid(True, which="both", alpha=0.25)
-    axis.legend()
-    _save_figure(figure, output_dir, "temporal_gradient_profile", args.dpi, plt)
-
-    figure, axis = plt.subplots(figsize=(8.5, 5.2), constrained_layout=True)
-    axis.semilogy(steps, np.maximum(base_retention, 1e-30), "o-", label="Non-LS (LIF)")
-    axis.semilogy(steps, np.maximum(ls_retention, 1e-30), "o-", label="LS (LSLIF)")
-    axis.axhline(args.horizon_threshold, color="0.45", linestyle="--",
-                 label=f"Horizon threshold ({args.horizon_threshold:g})")
-    axis.set(xlabel="Time step", ylabel="Gradient / final-step gradient",
-             title="Temporal gradient retention")
-    axis.grid(True, which="both", alpha=0.25)
-    axis.legend()
-    _save_figure(figure, output_dir, "temporal_gradient_retention", args.dpi, plt)
-
-    figure, axes = plt.subplots(1, 2, figsize=(10.5, 4.8), constrained_layout=True)
-    labels = ("Non-LS", "LS")
-    axes[0].bar(labels, (base_slope, ls_slope), color=("#777777", "#2878b5"))
-    axes[0].axhline(0, color="black", linewidth=0.8)
-    axes[0].set(ylabel="Slope of log10 gradient vs. distance",
-                title="Temporal decay slope\n(closer to zero is better)")
-    axes[1].bar(labels, (base_horizon, ls_horizon), color=("#777777", "#2878b5"))
-    axes[1].set(ylabel="Time steps", title=f"Effective gradient horizon\n(retention ≥ {args.horizon_threshold:g})")
-    _save_figure(figure, output_dir, "temporal_gradient_summary", args.dpi, plt)
-    return {
-        "ls_profile": ls_profile, "baseline_profile": base_profile,
-        "ls_retention": ls_retention, "baseline_retention": base_retention,
-        "ls_decay_slope": ls_slope, "baseline_decay_slope": base_slope,
-        "ls_effective_horizon": ls_horizon, "baseline_effective_horizon": base_horizon,
-    }
-
-
-def _neuron_layer_names(config, device):
-    model = _build_model(config, device)
-    names = [name for name, module in model.named_modules()
-             if module.__class__.__name__ in ("VanillaLIFNeuron", "LSLIFNeuron")]
-    del model
-    return names
-
-
-def _plot_cross_layer(layer_names, ls_profiles, baseline_profiles, output_dir, args, np, plt):
-    ls_values = np.stack(ls_profiles)
-    baseline_values = np.stack(baseline_profiles)
-    log_ratio = np.log10((ls_values + 1e-30) / (baseline_values + 1e-30))
-    limit = float(np.percentile(np.abs(log_ratio), args.gradient_percentile))
-    limit = limit if limit > 0 else 1.0
-    figure, axis = plt.subplots(figsize=(max(8.5, 0.65 * ls_values.shape[1]),
-                                         max(4.5, 0.65 * len(layer_names))),
-                                constrained_layout=True)
-    image = axis.imshow(log_ratio, aspect="auto", cmap="RdBu_r", vmin=-limit, vmax=limit,
-                        interpolation="nearest")
-    axis.set(xlabel="Time step", ylabel="Neuron layer",
-             title="Cross-layer temporal gradient advantage: log10(LS / Non-LS)")
-    axis.set_xticks(range(ls_values.shape[1]), labels=range(1, ls_values.shape[1] + 1))
-    axis.set_yticks(range(len(layer_names)), labels=layer_names)
-    colorbar = figure.colorbar(image, ax=axis)
-    colorbar.set_label("log10 mean-|gradient| ratio")
-    _save_figure(figure, output_dir, "cross_layer_gradient_ratio", args.dpi, plt)
-    return log_ratio
-
+def _final_step_retention_matrix(matrix, np, epsilon=1e-30):
+    """Normalize each neuron's absolute gradient by its final-step magnitude."""
+    absolute = np.abs(matrix)
+    denominator = np.maximum(absolute[:, -1:], epsilon)
+    return absolute / denominator
 
 def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt):
     from matplotlib.colors import PowerNorm, SymLogNorm
@@ -429,7 +339,20 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
     norm = None
     cmap = _display_cmap(args.normalization)
     image_limits = {"vmin": -limit, "vmax": limit}
-    if args.normalization == "per-neuron":
+    if args.normalization == "final-step":
+        # Values are shown in log10 units so each color interval is one order of
+        # magnitude: 0.1 -> 0.01 occupies the same span as 0.01 -> 0.001.
+        ls_matrix = np.log10(np.maximum(ls_matrix, 1e-30))
+        baseline_matrix = np.log10(np.maximum(baseline_matrix, 1e-30))
+        combined_log = np.concatenate([ls_matrix.ravel(), baseline_matrix.ravel()])
+        finite = combined_log[np.isfinite(combined_log)]
+        lower = float(np.percentile(finite, 1.0)) if finite.size else -1.0
+        upper = float(np.percentile(finite, args.gradient_percentile)) if finite.size else 0.0
+        if upper <= lower:
+            lower, upper = upper - 1.0, upper
+        cmap = "viridis"
+        image_limits = {"vmin": lower, "vmax": upper}
+    elif args.normalization == "per-neuron":
         # A sequential white-to-blue map makes zero gradients white and uses
         # progressively darker blue for stronger propagation, matching the
         # conventional normalized-gradient heatmap style without neon colors.
@@ -454,7 +377,12 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
         axis.set_xlabel("Time step")
         axis.set_xticks(range(matrix.shape[1]))
         axis.set_xticklabels(range(1, matrix.shape[1] + 1))
-    if args.normalization == "per-neuron":
+    if args.normalization == "final-step":
+        difference = ls_matrix - baseline_matrix
+        difference_limit = float(np.percentile(np.abs(difference), args.gradient_percentile))
+        difference_limit = difference_limit if difference_limit > 0 else 1.0
+        difference_norm = None
+    elif args.normalization == "per-neuron":
         difference_limit = 1.0
         difference_norm = SymLogNorm(
             linthresh=args.difference_linthresh, linscale=1.0,
@@ -469,7 +397,9 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
     difference_image = axes[2].imshow(
         difference, aspect="auto", cmap="RdBu_r",
         interpolation="nearest", origin="upper", **difference_kwargs)
-    axes[2].set_title("Difference (LS − Non-LS)", pad=14)
+    axes[2].set_title(
+        "Retention ratio: log10(LS / Non-LS)" if args.normalization == "final-step"
+        else "Difference (LS − Non-LS)", pad=14)
     axes[2].set_xlabel("Time step")
     axes[2].set_xticks(range(difference.shape[1]))
     axes[2].set_xticklabels(range(1, difference.shape[1] + 1))
@@ -479,12 +409,19 @@ def _plot(ls_matrix, baseline_matrix, indices, layer, output_dir, args, np, plt)
     figure.suptitle(f"Temporal {source_label}-gradient propagation at {layer} ({target_label})",
                     fontsize=20, fontweight="bold")
     colorbar = figure.colorbar(images[0], ax=axes[:2], shrink=0.88, pad=0.02)
-    colorbar.set_label("Per-neuron normalized |gradient|" if args.normalization == "per-neuron"
-                       else f"{source_label.capitalize()} gradient")
+    if args.normalization == "final-step":
+        colorbar_label = "log10(|gradient(t)| / |gradient(final)|)"
+    elif args.normalization == "per-neuron":
+        colorbar_label = "Per-neuron max-normalized |gradient|"
+    else:
+        colorbar_label = f"{source_label.capitalize()} gradient"
+    colorbar.set_label(colorbar_label)
     difference_colorbar = figure.colorbar(difference_image, ax=axes[2], shrink=0.88, pad=0.02)
     difference_colorbar.set_label(
-        "Normalized gradient difference (LS − Non-LS)"
-        if args.normalization == "per-neuron" else "Gradient difference (LS − Non-LS)")
+        "log10 retention ratio (LS / Non-LS)"
+        if args.normalization == "final-step" else
+        ("Normalized gradient difference (LS − Non-LS)"
+         if args.normalization == "per-neuron" else "Gradient difference (LS − Non-LS)"))
     output_dir.mkdir(parents=True, exist_ok=True)
     figure.savefig(output_dir / "temporal_gradient_comparison.png", dpi=args.dpi,
                    bbox_inches="tight", facecolor="white")
@@ -512,13 +449,16 @@ def build_parser():
     parser.add_argument("--gradient-percentile", type=float, default=99.0)
     parser.add_argument("--gradient-target", choices=("final", "all"), default="final",
                         help="Backpropagate final-step loss (default) or the training loss at every step.")
-    parser.add_argument("--gradient-source", choices=("state", "input"), default="state",
-                        help="Inspect the pre-spike membrane state (default) or layer input.")
+    parser.add_argument("--gradient-source", choices=("state", "input"), default="input",
+                        help="Inspect the layer input (default), which includes every recurrent "
+                             "LS path, or the local pre-spike membrane used for thresholding.")
     parser.add_argument("--aggregation", choices=("batch-mean-abs", "sample-signed"),
                         default="batch-mean-abs",
                         help="Aggregate absolute gradients over the fixed batch (default) or one sample.")
-    parser.add_argument("--normalization", choices=("per-neuron", "none"), default="per-neuron",
-                        help="Normalize each neuron's temporal profile for the display (default).")
+    parser.add_argument("--normalization", choices=("final-step", "per-neuron", "none"),
+                        default="final-step",
+                        help="Divide every neuron by its final-step gradient (default); "
+                             "per-neuron retains the legacy max normalization.")
     parser.add_argument("--normalized-color-gamma", type=float, default=0.35,
                         help="Power-law color gamma; values below 1 emphasize weak gradients.")
     parser.add_argument("--difference-linthresh", type=float, default=0.02,
@@ -581,7 +521,10 @@ def main(argv=None):
     indices = evenly_spaced_indices(ls_full.shape[0], args.max_neurons)
     ls_raw = ls_full[indices].numpy()
     baseline_raw = baseline_full[indices].numpy()
-    if args.normalization == "per-neuron":
+    if args.normalization == "final-step":
+        ls_matrix = _final_step_retention_matrix(ls_raw, np)
+        baseline_matrix = _final_step_retention_matrix(baseline_raw, np)
+    elif args.normalization == "per-neuron":
         ls_scale = np.max(np.abs(ls_raw), axis=1, keepdims=True)
         baseline_scale = np.max(np.abs(baseline_raw), axis=1, keepdims=True)
         ls_matrix = np.abs(ls_raw) / np.maximum(ls_scale, 1e-30)
@@ -589,11 +532,25 @@ def main(argv=None):
     else:
         ls_matrix, baseline_matrix = ls_raw, baseline_raw
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    # Remove figures from the superseded multi-figure version when reusing an
+    # output directory, leaving this run's single comparison figure unambiguous.
+    for stem in ("temporal_gradient_profile", "temporal_gradient_retention",
+                 "temporal_gradient_summary", "cross_layer_gradient_ratio"):
+        for suffix in ("png", "svg"):
+            stale_figure = args.output_dir / f"{stem}.{suffix}"
+            if stale_figure.exists():
+                stale_figure.unlink()
+    stale_summary = args.output_dir / "temporal_gradient_summaries.npz"
+    if stale_summary.exists():
+        stale_summary.unlink()
     np.savez_compressed(args.output_dir / "temporal_gradients.npz",
                         ls_gradient_raw=ls_raw, baseline_gradient_raw=baseline_raw,
                         gradient_difference_raw=ls_raw - baseline_raw,
                         ls_gradient_display=ls_matrix, baseline_gradient_display=baseline_matrix,
                         gradient_difference_display=ls_matrix - baseline_matrix,
+                        retention_log10_ratio=np.log10(
+                            (ls_matrix + 1e-30) / (baseline_matrix + 1e-30))
+                        if args.normalization == "final-step" else np.asarray([]),
                         neuron_indices=np.asarray(indices), layer=np.asarray(args.layer),
                         sample_index=np.asarray(args.sample_index), batch_index=np.asarray(args.batch_index),
                         gradient_target=np.asarray(args.gradient_target),
