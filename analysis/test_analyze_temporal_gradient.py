@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from analysis.analyze_temporal_gradient import (
+    _gradient_summary,
+    _retention_profile,
     _display_cmap,
     _install_numpy_legacy_aliases,
     _time_frame,
@@ -49,6 +51,8 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
         self.assertEqual(args.layer, "layer3.6")
         self.assertEqual(args.checkpoint_name, "checkpoint_max.pth")
         self.assertEqual(args.max_neurons, 512)
+        self.assertEqual(args.cross_layer_count, 5)
+        self.assertEqual(args.horizon_threshold, 1e-2)
         self.assertEqual(args.gradient_target, "final")
         self.assertEqual(args.gradient_source, "state")
         self.assertEqual(args.aggregation, "batch-mean-abs")
@@ -84,6 +88,17 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
     def test_normalized_heatmap_uses_white_to_blue_colormap(self):
         self.assertEqual(_display_cmap("per-neuron"), "Blues")
         self.assertEqual(_display_cmap("none"), "RdBu_r")
+
+    def test_retention_and_horizon_use_final_step_as_reference(self):
+        import numpy as np
+
+        profile = np.asarray([0.001, 0.01, 0.1, 1.0])
+        np.testing.assert_allclose(_retention_profile(profile), profile)
+        matrix = np.stack([profile, profile])
+        _, retention, slope, horizon = _gradient_summary(matrix, np, threshold=1e-2)
+        np.testing.assert_allclose(retention, profile)
+        self.assertAlmostEqual(slope, -1.0)
+        self.assertEqual(horizon, 2.0)
 
 
 if __name__ == "__main__":

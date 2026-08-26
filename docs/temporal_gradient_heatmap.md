@@ -35,6 +35,10 @@ LSLIF checkpoint。默认分析 VGG11 的中部神经元层 `layer3.6`；如果 
 - `--batch-index` / `--sample-index`：测试批次及批次内样本，默认均为 0。
 - `--batch-size`：仅影响诊断反向传播，默认 16。
 - `--max-neurons`：沿展平后的通道和空间维均匀采样的最大神经元数，默认 512。
+- `--cross-layer-count`：跨层热力图自动均匀抽取的神经元层数，默认 5。指定的
+  `--layer` 无论是否被抽中都会包含在图中。每个额外层需要为两个 checkpoint 各补做
+  一次诊断前向/反向，因此命令不变，但运行时间会增加；显存峰值仍接近单层分析。
+- `--horizon-threshold`：有效梯度时间跨度使用的保持率阈值，默认 `1e-2`。
 - `--gradient-percentile`：两种方法共同颜色范围的绝对值百分位，默认 99；两幅图
   始终使用同一个对称色标，不能分别归一化。
 - `--gradient-target`：默认 `final`，只从最后时间步的分类损失反向传播，使较早时间步
@@ -63,9 +67,35 @@ LSLIF checkpoint。默认分析 VGG11 的中部神经元层 `layer3.6`；如果 
 
 - `temporal_gradient_comparison.png`：非 LS、LS 和二者差值并排的高分辨率时间梯度热力图。
 - `temporal_gradient_comparison.svg`：可无限缩放的矢量版本。
+- `temporal_gradient_profile.{png,svg}`：指定层每个时间步的平均绝对梯度，使用对数纵轴。
+- `temporal_gradient_retention.{png,svg}`：指定层相对最后时间步的梯度保持率。
+- `temporal_gradient_summary.{png,svg}`：指定层的 log10 梯度衰减斜率和有效梯度时间跨度。
+- `cross_layer_gradient_ratio.{png,svg}`：多个均匀采样层的
+  `log10(LS mean-|gradient| / Non-LS mean-|gradient|)` 时间热力图。
 - `temporal_gradients.npz`：同时保存 `*_gradient_raw` 原始/批平均绝对梯度和
   `*_gradient_display` 绘图矩阵，以及真实神经元索引和诊断元数据。
   `gradient_difference_raw` 保存原始差值，`gradient_difference_display` 保存绘图差值。
+- `temporal_gradient_summaries.npz`：保存两种方法的绝对梯度曲线、保持率、衰减斜率、
+  有效时间跨度，以及跨层绝对梯度曲线和 log10 比值矩阵。
+
+原推荐命令无需增加参数即可生成上述所有图。与旧版相比，唯一必须考虑的变化是：跨层图
+需要对额外层逐层补做反向传播，所以耗时约随 `--cross-layer-count` 线性增加，但不会训练
+或修改 checkpoint。资源紧张时可以设为 `--cross-layer-count 1`，仍会包含显式指定的层。
+
+## 如何判断 LS 的梯度传播更好
+
+- 绝对梯度曲线中，LS 在远离最终监督的早期时间步高于 Non-LS，说明早期状态收到的
+  反向信号更强；重点应看多批次、多 seed 是否一致，而不是单个尖峰。
+- 保持率曲线中，LS 从最后时间步向前衰减更慢、在早期保持率更高，说明优势不是简单的
+  全局梯度缩放，而是更好的时间传播。
+- 摘要图中，衰减斜率越接近 0 表示梯度随时间距离下降越慢；有效时间跨度越大表示超过
+  指定保持率阈值的反向路径延伸得更早。
+- 跨层比值热力图中，正值（红色）表示 LS 梯度更强，`+1` 表示约强 10 倍。若多个层的
+  早期时间步持续为正，比只在单层或单时间点出现红色更能支持 LS 的普遍优势。
+
+这些图必须使用训练协议对齐的 checkpoint，并优先保持默认的 `--gradient-target final`
+和 `--gradient-source state`。单个 checkpoint 的图属于诊断证据；正式结论应汇总多个固定
+batch 和 seed，并报告不确定性。
 
 横轴是时间步，纵轴是在目标层展平后均匀采样的神经元。默认颜色是固定 batch 的
 膜电位绝对梯度均值经过逐神经元时间归一化后的数值。默认展示最后时间步损失向所有
