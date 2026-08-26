@@ -44,7 +44,7 @@ dropout 不一致，工具会输出显式警告。它仍允许生成探索性图
   一次诊断前向/反向，因此命令不变，但运行时间会增加；显存峰值仍接近单层分析。
 - `--horizon-threshold`：有效梯度时间跨度使用的保持率阈值，默认 `1e-2`。
 - `--gradient-percentile`：两种方法共同颜色范围的绝对值百分位，默认 99；两幅图
-  始终使用同一个对称色标，不能分别归一化。
+  始终使用同一个从白到深蓝的顺序色标，不能分别归一化。
 - `--gradient-target`：默认 `final`，只从最后时间步的分类损失反向传播，使较早时间步
   的梯度只能通过神经元状态沿时间反传，这才对应 BPTT 时间梯度传播。`all` 可复现把
   每个时间步分类损失相加的旧行为。
@@ -61,7 +61,9 @@ dropout 不一致，工具会输出显式警告。它仍允许生成探索性图
   所以 `0.1→0.01` 与 `0.01→0.001` 的视觉距离相同。`per-neuron` 保留旧版的跨时间
   最大值归一化，仅用于复现旧图；`none` 保留绝对梯度。
 - `--normalized-color-gamma`、`--difference-linthresh` 和 `--color-scale`：仅影响
-  `per-neuron`/`none` 旧兼容模式；默认 `final-step` 已直接使用 log10 数量级色标。
+  `per-neuron`/`none` 兼容模式。前两个面板始终画梯度绝对强度，并用幂次颜色映射压缩
+  动态范围，使较弱时间步仍然可见；`sample-signed` 的原始符号仍完整保存在 NPZ 中。
+  默认 `final-step` 已直接使用 log10 数量级色标。
 - `--device`：例如 `cuda:0` 或 `cpu`；默认自动选择。
 - `--fig-width`、`--fig-height`、`--dpi`：默认 `21`、`8`、`300`，可直接调整图片
   画布和清晰度。
@@ -76,7 +78,8 @@ dropout 不一致，工具会输出显式警告。它仍允许生成探索性图
 - `cross_layer_gradient_ratio.{png,svg}`：多个均匀采样层的
   `log10(LS mean-|gradient| / Non-LS mean-|gradient|)` 时间热力图。
 - `temporal_gradients.npz`：同时保存 `*_gradient_raw` 原始/批平均绝对梯度和
-  `*_gradient_display` 绘图矩阵，以及真实神经元索引和诊断元数据。
+  `*_gradient_display` 非负绘图矩阵，以及真实神经元索引和诊断元数据。即使选择
+  `sample-signed`，`*_gradient_raw` 仍保留符号，而 `*_gradient_display` 保存主图所用绝对值。
   `retention_log10_ratio` 保存第三个面板使用的 LS/Non-LS 保持率 log10 比值。
 
 原推荐命令无需增加参数，只生成这一组 PNG/SVG 对比图。每个 checkpoint 各执行一次

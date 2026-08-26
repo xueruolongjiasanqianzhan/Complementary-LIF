@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from analysis.analyze_temporal_gradient import (
+    _absolute_display_matrices,
     _final_step_retention_matrix,
     _display_cmap,
     _install_numpy_legacy_aliases,
@@ -94,8 +95,17 @@ class TemporalGradientAnalysisTests(unittest.TestCase):
             _time_frame(frames, 1, 4)
 
     def test_normalized_heatmap_uses_white_to_blue_colormap(self):
+        self.assertEqual(_display_cmap("final-step"), "Blues")
         self.assertEqual(_display_cmap("per-neuron"), "Blues")
-        self.assertEqual(_display_cmap("none"), "RdBu_r")
+        self.assertEqual(_display_cmap("none"), "Blues")
+
+    def test_raw_signed_gradient_is_displayed_as_strength(self):
+        import numpy as np
+
+        ls, baseline = _absolute_display_matrices(
+            np.asarray([[-2.0, 1.0]]), np.asarray([[3.0, -4.0]]), "none", np)
+        np.testing.assert_array_equal(ls, [[2.0, 1.0]])
+        np.testing.assert_array_equal(baseline, [[3.0, 4.0]])
 
     def test_final_step_matrix_normalization_uses_orders_of_magnitude(self):
         import numpy as np
