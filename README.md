@@ -58,6 +58,9 @@ LSLIF4 uses the same dataset/model commands; only switch the neuron option to ``
 For a hypothesis-driven LS evaluation plan (causal branch interventions,
 long-delay generalization, reset-pressure controls, ablations, statistics, and
 energy reporting), see [the LS experiment roadmap](docs/LS_experiment_roadmap.md).
+For a paper-oriented summary of the standard LSLIF mechanism, equations,
+claims, experimental logic, and writing boundaries, see
+[the LSLIF paper core summary](docs/LSLIF_paper_core_summary.md).
 The first checkpoint-only history intervention is implemented in
 [`analysis/history_branch_intervention_eval.py`](analysis/history_branch_intervention_eval.py),
 with usage and interpretation documented [here](docs/history_branch_intervention.md).
