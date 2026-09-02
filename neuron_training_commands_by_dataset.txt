@@ -35,6 +35,7 @@
 #    -rplif_alpha 1.5：spike 后下一时间步阈值乘法升高系数；1.0 退化为普通 LIF 阈值行为，论文推荐相对不应期默认 1.5。
 #    -rplif_v_init_th：动态阈值初始值；不显式传入时默认等于 -v_threshold。
 #    -refractory_step 1：论文推荐的一步阈值动态；实现不冻结膜电位、不丢弃下一步输入。
+#    不同序列长度不应默认共享同一组 alpha/history 参数；短序列消融建议见 docs/RPLIF_short_sequence_tuning.md。
 
 ############################################################
 # CIFAR-10
@@ -112,9 +113,9 @@ python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T
 # LSLIF（特有参数：history 分支）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
-# LSRPLIF（LSLIF history 分支 + RPLIF 动态阈值；默认 alpha=1.5、step=1）
-python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSRPLIF \
-  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
+# LSRPLIF（CIFAR-10 短序列 T=4：减弱早期 LS 注入和连续发放抑制；长序列仍从 1.0/1.5 基线开始）
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T 4 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSRPLIF \
+  -history_weight 0.25 -history_power 1.0 -history_eps 1e-6 -history_mode all -rplif_alpha 1.25 -rplif_v_init_th 1.0 -refractory_step 1
 
 # LSLIF2（特有参数：总膜残余副膜；history_growth 已废弃，不需要传）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF2 \
@@ -127,6 +128,9 @@ python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T
 # LSLIF4（特有参数：累计主膜泄漏/重置损失的 history 分支；基于融合膜电位 reset，默认 soft reset）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF4 \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# CLIF（complementary LIF，无额外特有参数）
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model CLIF
 
 # LSCLIF（特有参数：history 分支 + CLIF complementary memory）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSCLIF \
@@ -225,9 +229,9 @@ python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -
 # LSLIF（特有参数：history 分支）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
-# LSRPLIF（LSLIF history 分支 + RPLIF 动态阈值；默认 alpha=1.5、step=1）
-python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSRPLIF \
-  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
+# LSRPLIF（CIFAR-100 短序列 T=4：减弱早期 LS 注入和连续发放抑制；长序列仍从 1.0/1.5 基线开始）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T 4 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSRPLIF \
+  -history_weight 0.25 -history_power 1.0 -history_eps 1e-6 -history_mode all -rplif_alpha 1.25 -rplif_v_init_th 1.0 -refractory_step 1
 
 # LSLIF2（特有参数：总膜残余副膜；history_growth 已废弃，不需要传）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF2 \
@@ -240,6 +244,9 @@ python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -
 # LSLIF4（特有参数：累计主膜泄漏/重置损失的 history 分支；基于融合膜电位 reset，默认 soft reset）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF4 \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# CLIF（complementary LIF，无额外特有参数）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model CLIF
 
 # LSCLIF（特有参数：history 分支 + CLIF complementary memory）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSCLIF \
@@ -356,6 +363,9 @@ python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13
 # LSLIF4（特有参数：累计主膜泄漏/重置损失的 history 分支；基于融合膜电位 reset，默认 soft reset）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSLIF4 \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# CLIF（complementary LIF，无额外特有参数）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model CLIF
 
 # LSCLIF（特有参数：history 分支 + CLIF complementary memory）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSCLIF \
@@ -489,6 +499,9 @@ python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -m
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSLIF4 \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
 
+# CLIF（complementary LIF，无额外特有参数）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model CLIF
+
 # LSCLIF（特有参数：history 分支 + CLIF complementary memory）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSCLIF \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
@@ -604,6 +617,9 @@ python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn
 # LSLIF4（特有参数：累计主膜泄漏/重置损失的 history 分支；基于融合膜电位 reset，默认 soft reset）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF4 \
   -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_weight_lo -0.8 -history_weight_hi 0.8 -history_mode all
+
+# CLIF（complementary LIF，无额外特有参数）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model CLIF
 
 # LSCLIF（特有参数：history 分支 + CLIF complementary memory）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSCLIF \
