@@ -101,7 +101,7 @@ def main():
     parser.add_argument('-T', default=4, type=int, help='simulating time-steps')
     parser.add_argument('-tau', default=2.0, type=float, help='a hyperparameter for the LIF model')
     parser.add_argument('-b', default=128, type=int, help='batch size')
-    parser.add_argument('-epochs', default=300, type=int, metavar='N', help='number of total epochs to run')
+    parser.add_argument('-epochs', default=400, type=int, metavar='N', help='number of total epochs to run')
     parser.add_argument('-j', default=0, type=int, metavar='N', help='number of data loading workers (default: 4)')
     parser.add_argument('-data_dir', type=str, default='./data', help='directory of the used dataset')
     parser.add_argument('-dataset', default='cifar10', type=str, help='should be cifar10, cifar100, DVSCIFAR10, dvsgesture, or imagenet')
@@ -117,7 +117,7 @@ def main():
     parser.add_argument('-lr_scheduler', default='CosALR', type=str, help='use which schedule. StepLR or CosALR')
     parser.add_argument('-step_size', default=100, type=float, help='step_size for StepLR')
     parser.add_argument('-gamma', default=0.1, type=float, help='gamma for StepLR')
-    parser.add_argument('-T_max', default=300, type=int, help='T_max for CosineAnnealingLR')
+    parser.add_argument('-T_max', default=400, type=int, help='T_max for CosineAnnealingLR')
     parser.add_argument('-model', type=str, default='spiking_vgg11_bn', help='use which SNN model; includes dvscifar10_fc2 for a lightweight two-hidden-layer FC SNN')
     parser.add_argument('-fc_hidden_dim', type=int, default=1024, help='for dvscifar10_fc2 only: hidden neurons per fully connected hidden layer')
     parser.add_argument('-drop_rate', type=float, default=0.0, help='dropout rate')
@@ -792,8 +792,8 @@ def main():
         f'神经元{args.neuron_model}',
         f'时间步数T{args.T}',
         f'轮数E{args.epochs}',
-        f'发放阈值{args.v_threshold}',
-        f'突触级释放{"是" if args.synaptic_release_enable else "否"}',
+        # f'发放阈值{args.v_threshold}',
+        # f'突触级释放{"是" if args.synaptic_release_enable else "否"}',
     ]
     if args.synaptic_release_enable:
         run_name_parts.append(f'突触释放模式{args.synaptic_release_mode}')
@@ -888,14 +888,14 @@ def main():
         history_weight_range = '无' if args.history_weight_lo is None and args.history_weight_hi is None else f'{args.history_weight_lo}到{args.history_weight_hi}'
         history_power_can_learn = '是' if args.history_learn_power else '否'
         run_name_parts.extend([
-            f'历史权重{args.history_weight}',
-            f'历史幂次{args.history_power}',
+            f'历史权{args.history_weight}',
+            f'历史幂{args.history_power}',
             f'历史eps{args.history_eps}',
             f'历史模式{args.history_mode}',
-            f'历史权重可学习{history_weight_can_learn}',
-            f'历史权重逐时间步{history_weight_per_step}',
-            f'历史权重范围{history_weight_range}',
-            f'历史幂次可学习{history_power_can_learn}',
+            f'历史权可学习{history_weight_can_learn}',
+            f'历史权逐时间步{history_weight_per_step}',
+            f'历史权范围{history_weight_range}',
+            f'历史幂可学习{history_power_can_learn}',
         ])
         if args.neuron_model == 'LSLIF2':
             run_name_parts.extend([
@@ -948,23 +948,23 @@ def main():
             f'SuccessMod_mincount{args.success_modulation_min_count}',
         ])
 
-    if args.name:
-        run_name_parts.append(f'备注{args.name}')
+    # if args.name:
+    #     run_name_parts.append(f'备注{args.name}')
 
-    if args.lr_scheduler == 'CosALR':
-        run_name_parts.append(f'学习率调度CosALR_Tmax{args.T_max}')
-    elif args.lr_scheduler == 'StepLR':
-        run_name_parts.append(f'学习率调度StepLR_step{args.step_size}_gamma{args.gamma}')
-    else:
-        raise NotImplementedError(args.lr_scheduler)
+    # if args.lr_scheduler == 'CosALR':
+    #     run_name_parts.append(f'学习率调度CosALR_Tmax{args.T_max}')
+    # elif args.lr_scheduler == 'StepLR':
+    #     run_name_parts.append(f'学习率调度StepLR_step{args.step_size}_gamma{args.gamma}')
+    # else:
+    #     raise NotImplementedError(args.lr_scheduler)
 
-    if args.amp:
-        run_name_parts.append('混合精度是')
-    else:
-        run_name_parts.append('混合精度否')
+    # if args.amp:
+    #     run_name_parts.append('混合精度是')
+    # else:
+    #     run_name_parts.append('混合精度否')
 
-    if args.cutupmix_auto:
-        run_name_parts.append('CutUpMix自动增强是')
+    # if args.cutupmix_auto:
+    #     run_name_parts.append('CutUpMix自动增强是')
 
     out_dir = os.path.join(args.out_dir, '_'.join(run_name_parts))
 
