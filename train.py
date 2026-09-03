@@ -1302,7 +1302,9 @@ def main():
             torch.save(checkpoint, os.path.join(out_dir, 'checkpoint_latest.pth'))
 
         total_time = time.time() - start_time
-        info = f'epoch={epoch}, train_loss={train_loss}, train_acc={train_acc}, test_loss={test_loss}, test_acc={test_acc}, max_test_acc={max_test_acc}, total_time={total_time}, test_spike_rate_global={global_spike_rate}, escape_time={(datetime.datetime.now() + datetime.timedelta(seconds=total_time * (args.epochs - epoch))).strftime("%Y-%m-%d %H:%M:%S")}'
+        # Keep the human-readable epoch summary at a stable precision.  The
+        # checkpoint and TensorBoard writer still receive the original floats.
+        info = f'epoch={epoch}, train_loss={train_loss:.4f}, train_acc={train_acc:.4f}, test_loss={test_loss:.4f}, test_acc={test_acc:.4f}, max_test_acc={max_test_acc:.4f}, total_time={total_time:.4f}, test_spike_rate_global={global_spike_rate:.4f}, escape_time={(datetime.datetime.now() + datetime.timedelta(seconds=total_time * (args.epochs - epoch))).strftime("%Y-%m-%d %H:%M:%S")}'
         print(info)
         print(f'test_spike_rate_layers={layer_spike_rates}')
         mem_cost = "after one epoch: %fGB" % (torch.cuda.max_memory_cached(0) / 1024 / 1024 / 1024)

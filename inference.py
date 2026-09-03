@@ -824,7 +824,9 @@ def main():
     ############### calculation  ###############
 
     total_time = time.time() - start_time
-    info = f'test_loss={test_loss}, test_acc={test_acc}, max_test_acc={max_test_acc}, total_time={total_time}, test_spike_rate_global={global_spike_rate}'
+    # Match the training summary's stable four-decimal display precision.  This
+    # only affects text output; metric calculations retain their full precision.
+    info = f'test_loss={test_loss:.4f}, test_acc={test_acc:.4f}, max_test_acc={max_test_acc:.4f}, total_time={total_time:.4f}, test_spike_rate_global={global_spike_rate:.4f}'
     print(info)
     print(f'test_spike_rate_layers={layer_spike_rates}')
     mem_cost = "after one epoch: %fGB" % (torch.cuda.max_memory_cached(0) / 1024 / 1024 / 1024)
