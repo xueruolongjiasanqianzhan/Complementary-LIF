@@ -126,12 +126,15 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), SRLIF (Synaptic Release LIF), SCRLIF (Spike-Cause Reset LIF), SCRLIFV2, HALIF, ZELIF, IDISILIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, RPLIF, LSRPLIF, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, Ternary, LSTernary, QKVLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), GLIF, LSGLIF, SRLIF (Synaptic Release LIF), SCRLIF (Spike-Cause Reset LIF), SCRLIFV2, HALIF, ZELIF, IDISILIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, RPLIF, LSRPLIF, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, Ternary, LSTernary, QKVLIF, CLIF, PLIF, relu')
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
     parser.add_argument('-idisi_max_inverse_decay', type=float, default=8.0, help='for IDISILIF only: clamp for inverse-decay ISI credit')
     parser.add_argument('-idisi_eps', type=float, default=1e-6, help='for IDISILIF only: numerical epsilon for threshold and decay')
     parser.add_argument('-release_threshold_init', type=float, default=1.0, help='for SRLIF and synaptic release layers: initial release threshold, constrained to [v_threshold, +inf)')
     parser.add_argument('-v_threshold', type=float, default=1.0, help='shared soma firing threshold for LIF-family neurons; lower values usually increase spike/release rate')
+    parser.add_argument('-glif_alpha', type=float, default=None, help='for GLIF/LSGLIF: initial decay gate; defaults to 1 - 1/tau')
+    parser.add_argument('-glif_beta', type=float, default=0.999, help='for GLIF/LSGLIF: initial input gate in (0, 1)')
+    parser.add_argument('-glif_gamma', type=float, default=0.999, help='for GLIF/LSGLIF: initial soft-reset gate in (0, 1)')
     parser.add_argument('-srlif_release_ratio', type=float, default=0.5, help='for SRLIF only: fraction of output paths gated by the learnable release threshold; remaining paths transmit ordinary LIF spikes')
     parser.add_argument('-synaptic_release_enable', action='store_true', help='enable learnable release thresholds inside supported Conv2d layers')
     parser.add_argument('-synaptic_release_mode', type=str, default='full', choices=['full', 'input_kernel', 'spatial_input_kernel'], help='for synaptic release Conv2d: full keeps the original per-output-channel synapse thresholds; input_kernel shares thresholds by input channel and kernel offset; spatial_input_kernel also keeps separate thresholds per output location')
@@ -501,6 +504,10 @@ def main():
 
     if args.neuron_model == 'LIF':
         neuron_model = neuron.VanillaLIFNeuron
+    elif args.neuron_model == 'GLIF':
+        neuron_model = neuron.GLIFNeuron
+    elif args.neuron_model == 'LSGLIF':
+        neuron_model = neuron.LSGLIFNeuron
     elif args.neuron_model == 'SRLIF':
         neuron_model = neuron.SRLIFNeuron
     elif args.neuron_model == 'SCRLIF':
@@ -568,6 +575,9 @@ def main():
     neuron_kwargs = dict(
         tau=args.tau,
         v_threshold=args.v_threshold,
+        glif_alpha=args.glif_alpha,
+        glif_beta=args.glif_beta,
+        glif_gamma=args.glif_gamma,
         idisi_max_inverse_decay=args.idisi_max_inverse_decay,
         idisi_total_steps=args.T,
         idisi_eps=args.idisi_eps,

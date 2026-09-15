@@ -80,7 +80,25 @@ with usage and interpretation documented [here](docs/history_branch_intervention
     # DVS-Gesture with LSLIF4
     python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSLIF4
 
-If you change the neuron, you can switch with ``-neuron_model`` among ``LIF`` (vanilla), ``HALIF`` (heterogeneous autonomous LIF), ``newLIF`` (adaptive tau), ``newLIFTauDep``, ``newCLIF``, ``DTLIF``, ``DGN``, ``LIFDGN``, ``LSLIF``, ``LSLIF2``, ``LSLIF3``, ``LSLIF4``, ``SCRLIFV2``, ``QKVLIF``, ``CLIF``, ``PLIF``, and ``relu``.
+If you change the neuron, you can switch with ``-neuron_model`` among ``LIF`` (vanilla), ``GLIF`` (unified gated LIF), ``LSGLIF`` (GLIF with the LS history branch), ``HALIF`` (heterogeneous autonomous LIF), ``newLIF`` (adaptive tau), ``newLIFTauDep``, ``newCLIF``, ``DTLIF``, ``DGN``, ``LIFDGN``, ``LSLIF``, ``LSLIF2``, ``LSLIF3``, ``LSLIF4``, ``SCRLIFV2``, ``QKVLIF``, ``CLIF``, ``PLIF``, and ``relu``.
+
+GLIF and LSGLIF expose independent learnable decay, input, and reset gates. The
+initial gate values can be set with ``-glif_alpha``, ``-glif_beta``, and
+``-glif_gamma``; omitting ``-glif_alpha`` initializes the decay gate from
+``1 - 1/tau``. For example:
+
+    python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -neuron_model GLIF
+    python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -neuron_model LSGLIF -history_weight 1.0
+
+Here ``glif_alpha`` is the previous-membrane retention coefficient,
+``glif_beta`` scales the current synaptic input, and ``glif_gamma`` scales the
+threshold subtracted by a soft reset. All three values are converted to logits
+at construction and learned through a sigmoid constraint. These switches and
+LSGLIF are repository integration parameters, rather than a claim that this
+repository reproduces the upstream authors' complete training stack. Exact
+paper-number reproduction also requires their backbone, preprocessing,
+optimizer, schedule, seed, and other training settings; commands below preserve
+this repository's established dataset recipes for controlled comparisons.
 
 HALIF adds heterogeneous autonomous neurons inside each LIF layer. For example:
 

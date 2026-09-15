@@ -36,6 +36,14 @@
 #    -rplif_v_init_th：动态阈值初始值；不显式传入时默认等于 -v_threshold。
 #    -refractory_step 1：论文推荐的一步阈值动态；实现不冻结膜电位、不丢弃下一步输入。
 #    不同序列长度不应默认共享同一组 alpha/history 参数；短序列消融建议见 docs/RPLIF_short_sequence_tuning.md。
+# 9) GLIF / LSGLIF 专属参数说明：
+#    -glif_alpha 0.5：上一时间步膜电位的保留系数（decay gate）；省略时按 1 - 1/tau 初始化，tau=2.0 时即 0.5。
+#    -glif_beta 0.999：当前突触输入的缩放系数（input gate）；0.999 用有限 logit 近似完全接收输入，避免 logit(1) 无穷大。
+#    -glif_gamma 0.999：发放后减去 threshold 的比例（soft-reset gate）；0.999 用有限 logit 近似普通 LIF 的完整软重置。
+#    三个数在构造时转成 logit，训练时经 sigmoid 约束在 (0,1)，并作为每层共享的可学习标量。
+#    LSGLIF 额外使用 LSLIF 的 history 参数；命令中的 history_weight=1、history_power=1、history_mode=all 为本仓库默认 LS 配置。
+#    重要复现边界：这些 GLIF/LSGLIF 命令沿用本仓库的网络、数据处理和训练超参数，用于同设置公平比较；
+#    它们不是上游 Gated-LIF 仓库完整训练栈的逐项复刻，不能仅凭替换神经元保证达到论文表格精度。
 
 ############################################################
 # CIFAR-10
@@ -43,6 +51,12 @@
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIF
+# GLIF（三门控 LIF；显式列出本仓库默认初值，alpha=1-1/tau=0.5，beta/gamma 以 0.999 近似 1）
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model GLIF \
+  -tau 2.0 -glif_alpha 0.5 -glif_beta 0.999 -glif_gamma 0.999
+# LSGLIF（GLIF + 非重置 LS/history 支路；GLIF 门初值同上）
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSGLIF \
+  -tau 2.0 -glif_alpha 0.5 -glif_beta 0.999 -glif_gamma 0.999 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_mode all
 # RPLIF（相对不应期 LIF；spike 后按逐神经元动态阈值抬高下一步阈值，默认 alpha=1.5、step=1）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model RPLIF \
   -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
@@ -159,6 +173,12 @@ python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIF
+# GLIF（三门控 LIF；显式列出本仓库默认初值）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model GLIF \
+  -tau 2.0 -glif_alpha 0.5 -glif_beta 0.999 -glif_gamma 0.999
+# LSGLIF（GLIF + 非重置 LS/history 支路）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSGLIF \
+  -tau 2.0 -glif_alpha 0.5 -glif_beta 0.999 -glif_gamma 0.999 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_mode all
 # RPLIF（相对不应期 LIF；spike 后按逐神经元动态阈值抬高下一步阈值，默认 alpha=1.5、step=1）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model RPLIF \
   -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
@@ -275,6 +295,12 @@ python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIF
+# GLIF（三门控 LIF；显式列出本仓库默认初值）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model GLIF \
+  -tau 2.0 -glif_alpha 0.5 -glif_beta 0.999 -glif_gamma 0.999
+# LSGLIF（GLIF + 非重置 LS/history 支路）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSGLIF \
+  -tau 2.0 -glif_alpha 0.5 -glif_beta 0.999 -glif_gamma 0.999 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_mode all
 # RPLIF（相对不应期 LIF；spike 后按逐神经元动态阈值抬高下一步阈值，默认 alpha=1.5、step=1）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model RPLIF \
   -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
@@ -394,6 +420,12 @@ python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13
 
 # LIF（vanilla，无额外特有参数；VGG 基线）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIF
+# GLIF（三门控 LIF；沿用本仓库 DVS-CIFAR10 基础训练设置）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model GLIF \
+  -tau 2.0 -glif_alpha 0.5 -glif_beta 0.999 -glif_gamma 0.999
+# LSGLIF（GLIF + 非重置 LS/history 支路）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSGLIF \
+  -tau 2.0 -glif_alpha 0.5 -glif_beta 0.999 -glif_gamma 0.999 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_mode all
 # RPLIF（相对不应期 LIF；spike 后按逐神经元动态阈值抬高下一步阈值，默认 alpha=1.5、step=1）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model RPLIF \
   -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
@@ -529,6 +561,12 @@ python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -m
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIF
+# GLIF（三门控 LIF；沿用本仓库 DVS-Gesture 基础训练设置）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model GLIF \
+  -tau 2.0 -glif_alpha 0.5 -glif_beta 0.999 -glif_gamma 0.999
+# LSGLIF（GLIF + 非重置 LS/history 支路）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSGLIF \
+  -tau 2.0 -glif_alpha 0.5 -glif_beta 0.999 -glif_gamma 0.999 -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_mode all
 # RPLIF（相对不应期 LIF；spike 后按逐神经元动态阈值抬高下一步阈值，默认 alpha=1.5、step=1）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model RPLIF \
   -rplif_alpha 1.5 -rplif_v_init_th 1.0 -refractory_step 1
