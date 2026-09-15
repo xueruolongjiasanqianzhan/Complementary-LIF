@@ -666,6 +666,187 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
         return spike.to(dtype=x.dtype)
 
 
+class GLIFNeuron(ASNFireMixin, nn.Module):
+    """Unified gated leaky integrate-and-fire neuron.
+
+    This repository's integration uses independent, trainable sigmoid gates
+    for decay, input and reset.  This separates the three operations that are
+    coupled by ``tau`` in a conventional LIF neuron::
+
+        h[t] = sigmoid(alpha) * v[t-1] + sigmoid(beta) * x[t]
+        s[t] = H(h[t] - threshold)
+        v[t] = h[t] - sigmoid(gamma) * threshold * s[t]
+
+    Gate logits are scalar parameters and are therefore shared by all neurons
+    in a layer.  ``detach_reset`` only
+    detaches the spike used by the reset equation; it never changes the emitted
+    spike or its surrogate gradient.
+    """
+
+    def __init__(
+        self,
+        tau: float = 2.0,
+        decay_input: bool = False,
+        v_threshold: float = 1.0,
+        v_reset: Optional[float] = None,
+        surrogate_function: Optional[Callable] = None,
+        detach_reset: bool = False,
+        glif_alpha: Optional[float] = None,
+        glif_beta: float = 0.999,
+        glif_gamma: float = 0.999,
+        **kwargs,
+    ):
+        super().__init__()
+        if tau <= 1.0:
+            raise ValueError(f'GLIF requires tau > 1, got {tau}.')
+        for name, value in [('glif_beta', glif_beta), ('glif_gamma', glif_gamma)]:
+            if not 0.0 < float(value) < 1.0:
+                raise ValueError(f'{name} must be in (0, 1), got {value}.')
+
+        alpha = 1.0 - 1.0 / float(tau) if glif_alpha is None else float(glif_alpha)
+        if not 0.0 < alpha < 1.0:
+            raise ValueError(f'glif_alpha must be in (0, 1), got {alpha}.')
+
+        self.tau = float(tau)
+        self.decay_input = bool(decay_input)
+        self.v_threshold = float(v_threshold)
+        self.v_reset = v_reset
+        self.detach_reset = bool(detach_reset)
+        self.surrogate_function = surrogate_function if surrogate_function is not None else Rectangle()
+        self.alpha = nn.Parameter(torch.tensor(self._logit(alpha), dtype=torch.float32))
+        self.beta = nn.Parameter(torch.tensor(self._logit(glif_beta), dtype=torch.float32))
+        self.gamma = nn.Parameter(torch.tensor(self._logit(glif_gamma), dtype=torch.float32))
+        self._init_asn(
+            asn_enable=kwargs.get('asn_enable', False),
+            asn_p=kwargs.get('asn_p', 0.5),
+            asn_rho=kwargs.get('asn_rho', 0.5),
+            asn_seed=kwargs.get('asn_seed', 2022),
+            asn_detach_lateral=kwargs.get('asn_detach_lateral', False),
+            layer_index=kwargs.get('layer_index', None),
+            **_success_modulation_kwargs(kwargs),
+        )
+        self.v = None
+
+    @staticmethod
+    def _logit(value: float) -> float:
+        value_t = torch.tensor(value, dtype=torch.float32).clamp(1e-6, 1.0 - 1e-6)
+        return float(torch.logit(value_t).item())
+
+    @property
+    def decay_gate(self) -> torch.Tensor:
+        return torch.sigmoid(self.alpha)
+
+    @property
+    def input_gate(self) -> torch.Tensor:
+        return torch.sigmoid(self.beta)
+
+    @property
+    def reset_gate(self) -> torch.Tensor:
+        return torch.sigmoid(self.gamma)
+
+    def reset(self):
+        self.v = None
+
+    def _ensure_state(self, x: torch.Tensor):
+        if self.v is None or self.v.shape != x.shape or self.v.device != x.device:
+            self.v = torch.zeros_like(x, dtype=torch.float32, device=x.device)
+
+    def _charge(self, previous: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+        decay = self.decay_gate.to(device=x.device, dtype=x.dtype)
+        input_gate = self.input_gate.to(device=x.device, dtype=x.dtype)
+        if self.decay_input:
+            return decay * previous + (1.0 - decay) * input_gate * x
+        return decay * previous + input_gate * x
+
+    def _reset_membrane(self, charged: torch.Tensor, spike: torch.Tensor) -> torch.Tensor:
+        reset_spike = spike.detach() if self.detach_reset else spike
+        if self.v_reset is not None:
+            reset_value = torch.as_tensor(self.v_reset, device=charged.device, dtype=charged.dtype)
+            return torch.where(reset_spike.bool(), reset_value, charged)
+        threshold = torch.as_tensor(self.v_threshold, device=charged.device, dtype=charged.dtype)
+        reset_gate = self.reset_gate.to(device=charged.device, dtype=charged.dtype)
+        return charged - reset_spike * reset_gate * threshold
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        charged = self._charge(self.v, x.to(torch.float32))
+        self.last_v_pre = charged
+        threshold = torch.as_tensor(self.v_threshold, device=charged.device, dtype=charged.dtype)
+        spike = self._success_fire(charged, threshold)
+        self.v = self._reset_membrane(charged, spike)
+        self._cache_success_spike(spike)
+        return spike.to(dtype=x.dtype)
+
+
+class LSGLIFNeuron(LSLIFNeuron):
+    """GLIF with the non-reset auxiliary history branch used by LSLIF.
+
+    Both the resettable membrane and the history membrane use GLIF's learned
+    decay/input gates.  Only the main membrane receives the learned reset gate;
+    the auxiliary branch remains non-resetting and is fused using the existing
+    LSLIF history controls.
+    """
+
+    def __init__(self, *args, glif_alpha: Optional[float] = None,
+                 glif_beta: float = 0.999, glif_gamma: float = 0.999, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.tau <= 1.0:
+            raise ValueError(f'LSGLIF requires tau > 1, got {self.tau}.')
+        alpha = 1.0 - 1.0 / self.tau if glif_alpha is None else float(glif_alpha)
+        for name, value in [('glif_alpha', alpha), ('glif_beta', glif_beta), ('glif_gamma', glif_gamma)]:
+            if not 0.0 < float(value) < 1.0:
+                raise ValueError(f'{name} must be in (0, 1), got {value}.')
+        self.alpha = nn.Parameter(torch.tensor(GLIFNeuron._logit(alpha), dtype=torch.float32))
+        self.beta = nn.Parameter(torch.tensor(GLIFNeuron._logit(glif_beta), dtype=torch.float32))
+        self.gamma = nn.Parameter(torch.tensor(GLIFNeuron._logit(glif_gamma), dtype=torch.float32))
+
+    @property
+    def decay_gate(self) -> torch.Tensor:
+        return torch.sigmoid(self.alpha)
+
+    @property
+    def input_gate(self) -> torch.Tensor:
+        return torch.sigmoid(self.beta)
+
+    @property
+    def reset_gate(self) -> torch.Tensor:
+        return torch.sigmoid(self.gamma)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+        decay = self.decay_gate.to(device=x.device, dtype=torch.float32)
+        input_gate = self.input_gate.to(device=x.device, dtype=torch.float32)
+        input_term = (1.0 - decay) * input_gate * x_f if self.decay_input else input_gate * x_f
+        m_t = decay * self.v + input_term
+        n_t = decay * self.n + input_term
+
+        self.step_count += 1
+        step_t = torch.as_tensor(float(self.step_count), device=x.device, dtype=m_t.dtype)
+        power = self._get_history_power(m_t.dtype, m_t.device)
+        weight = self._get_history_weight(m_t.dtype, m_t.device, self.step_count)
+        history_term = weight * n_t / torch.pow(step_t + self.history_eps, power)
+        if self.history_mode == 'post_spike':
+            history_term = history_term * self.has_fired.to(history_term.dtype)
+        history_term = self._intervene_history_term(history_term)
+        total_mem = m_t + history_term
+        self.last_v_pre = total_mem
+
+        threshold = torch.as_tensor(self.v_threshold, device=x.device, dtype=m_t.dtype)
+        spike = self._success_fire(total_mem, threshold)
+        reset_spike = spike.detach() if self.detach_reset else spike
+        if self.v_reset is None:
+            reset_gate = self.reset_gate.to(device=x.device, dtype=m_t.dtype)
+            self.v = m_t - reset_spike * reset_gate * threshold
+        else:
+            reset_value = torch.as_tensor(self.v_reset, device=x.device, dtype=m_t.dtype)
+            self.v = torch.where(reset_spike.bool(), reset_value, m_t)
+        self.n = n_t
+        self.has_fired = torch.logical_or(self.has_fired, reset_spike.bool())
+        self._cache_success_spike(spike)
+        return spike.to(dtype=x.dtype)
+
+
 class RPLIFNeuron(ASNFireMixin, nn.Module):
     """Refractory-Period LIF with spike-triggered threshold dynamics.
 
