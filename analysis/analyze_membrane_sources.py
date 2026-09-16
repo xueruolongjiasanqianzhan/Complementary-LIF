@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.colors import PowerNorm
 import numpy as np
 
 
@@ -210,7 +211,9 @@ def _source_matrix(source_rows, key, steps):
     return matrix
 
 
-def plot_results(rows, source_rows, output_path):
+def plot_results(rows, source_rows, output_path, heatmap_gamma=0.35):
+    if heatmap_gamma <= 0.0:
+        raise ValueError(f'heatmap_gamma must be positive, got {heatmap_gamma}')
     steps = np.asarray([row['step'] for row in rows])
     fig, axes = plt.subplots(3, 2, figsize=(13, 11), sharex='col')
 
@@ -260,24 +263,37 @@ def plot_results(rows, source_rows, output_path):
     lif_matrix = _source_matrix(source_rows, 'lif_percent', len(rows))
     ls_matrix = _source_matrix(source_rows, 'lslif_percent', len(rows))
     common_max = max(np.nanmax(lif_matrix), np.nanmax(ls_matrix), 1.0)
+    # A power-law color normalization expands differences near zero while both
+    # heatmaps retain one shared scale.  gamma=1 recovers the linear mapping.
+    heatmap_norm = PowerNorm(gamma=heatmap_gamma, vmin=0, vmax=common_max)
+    heatmap_cmap = plt.get_cmap('viridis').copy()
+    heatmap_cmap.set_bad('white')
     image_lif = axes[2, 0].imshow(
-        lif_matrix, origin='lower', aspect='auto', vmin=0, vmax=common_max, cmap='viridis'
+        lif_matrix,
+        origin='lower',
+        aspect='auto',
+        norm=heatmap_norm,
+        cmap=heatmap_cmap,
     )
     axes[2, 0].set(title='LIF: contribution by input source time', xlabel='decision step', ylabel='input source step')
     axes[2, 1].imshow(
-        ls_matrix, origin='lower', aspect='auto', vmin=0, vmax=common_max, cmap='viridis'
+        ls_matrix,
+        origin='lower',
+        aspect='auto',
+        norm=heatmap_norm,
+        cmap=heatmap_cmap,
     )
     axes[2, 1].set(title='LSLIF: contribution by input source time', xlabel='decision step', ylabel='input source step')
-    colorbar_axis = fig.add_axes([0.935, 0.08, 0.012, 0.20])
+    colorbar_axis = fig.add_axes([0.90, 0.08, 0.012, 0.20])
     fig.colorbar(
         image_lif,
         cax=colorbar_axis,
-        label='share of pre-threshold membrane (%)',
+        label=f'share of pre-threshold membrane (%)\npower color scale, γ={heatmap_gamma:g}',
     )
     for ax in axes.flat:
         ax.grid(alpha=0.18)
     fig.suptitle('Proportional input provenance before each threshold decision')
-    fig.subplots_adjust(hspace=0.35, wspace=0.25, top=0.94, right=0.91)
+    fig.subplots_adjust(hspace=0.35, wspace=0.25, top=0.94, right=0.87)
     fig.savefig(output_path, dpi=180)
     plt.close(fig)
 
@@ -296,6 +312,12 @@ def main(argv=None):
     parser.add_argument('--threshold', type=float, default=1.0)
     parser.add_argument('--history-weight', type=float, default=0.6)
     parser.add_argument('--history-power', type=float, default=1.0)
+    parser.add_argument(
+        '--heatmap-gamma',
+        type=float,
+        default=0.35,
+        help='Power-law heatmap color exponent; smaller values emphasize low percentages.',
+    )
     parser.add_argument('--inputs', type=float, nargs='+')
     args = parser.parse_args(argv)
     inputs = args.inputs if args.inputs is not None else default_input_sequence()
@@ -317,6 +339,7 @@ def main(argv=None):
             'threshold': args.threshold,
             'history_weight': args.history_weight,
             'history_power': args.history_power,
+            'heatmap_gamma': args.heatmap_gamma,
             'reset': 'natural spike-triggered soft reset',
             'attribution': 'proportional redistribution of residual main membrane',
         },
@@ -326,7 +349,12 @@ def main(argv=None):
     write_csv(source_rows, output_dir / 'membrane_source_by_input_time.csv')
     with (output_dir / 'membrane_source_summary.json').open('w') as handle:
         json.dump(result, handle, indent=2)
-    plot_results(rows, source_rows, output_dir / 'membrane_source_attribution.png')
+    plot_results(
+        rows,
+        source_rows,
+        output_dir / 'membrane_source_attribution.png',
+        heatmap_gamma=args.heatmap_gamma,
+    )
     print(json.dumps(result, indent=2))
 
 

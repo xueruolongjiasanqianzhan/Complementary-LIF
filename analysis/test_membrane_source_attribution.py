@@ -1,6 +1,10 @@
 import unittest
 
-from analysis.analyze_membrane_sources import ProportionalSourceLedger, run_source_analysis
+from analysis.analyze_membrane_sources import (
+    ProportionalSourceLedger,
+    plot_results,
+    run_source_analysis,
+)
 
 
 class ProportionalSourceLedgerTest(unittest.TestCase):
@@ -41,6 +45,10 @@ class ProportionalSourceLedgerTest(unittest.TestCase):
         self.assertEqual(len(source_rows), 10)
         self.assertTrue(all(row['lif_reconstruction_error'] < 1e-12 for row in rows))
         self.assertTrue(all(row['lslif_reconstruction_error'] < 1e-12 for row in rows))
+
+    def test_heatmap_gamma_must_be_positive(self):
+        with self.assertRaisesRegex(ValueError, 'heatmap_gamma must be positive'):
+            plot_results([], [], 'unused.png', heatmap_gamma=0.0)
 
 
 if __name__ == '__main__':
