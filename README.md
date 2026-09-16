@@ -64,25 +64,11 @@ claims, experimental logic, and writing boundaries, see
 The first checkpoint-only history intervention is implemented in
 [`analysis/history_branch_intervention_eval.py`](analysis/history_branch_intervention_eval.py),
 with usage and interpretation documented [here](docs/history_branch_intervention.md).
-A direct, self-contained forced-reset experiment that visualizes the state
-preserved by the non-reset LS branch is available in
-[`analysis/reset_bypass_toy.py`](analysis/reset_bypass_toy.py), with the claim,
-metrics, and relationship to prefix masking documented
-[here](docs/reset_bypass_experiment.md).
-
-Quick run (no dataset or checkpoint required):
-
-```bash
-python -m pip install -r analysis/requirements.txt
-python analysis/reset_bypass_toy.py
-```
-
-To run the repository's actual `VanillaLIFNeuron` and `LSLIFNeuron` classes
-(requires the normal PyTorch/SpikingJelly training environment):
-
-```bash
-python analysis/reset_bypass_real_neurons.py
-```
+The mechanism-only membrane-source attribution analysis is implemented in
+[`analysis/analyze_membrane_sources.py`](analysis/analyze_membrane_sources.py).
+It separates current input, past input, reset subtraction, and LS-retained
+past input using the real LIF/LSLIF implementations; see
+[`docs/membrane_source_attribution.md`](docs/membrane_source_attribution.md).
 
     # CIFAR-10 with LSLIF4
     python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSLIF4
