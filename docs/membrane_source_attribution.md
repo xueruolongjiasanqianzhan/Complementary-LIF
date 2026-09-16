@@ -1,16 +1,22 @@
-# LIF/LSLIF membrane-source attribution
+# Pre-threshold membrane provenance for LIF/LSLIF
 
-This mechanism-only experiment asks how much of the membrane used for the
-current firing decision comes from current input, past input, reset
-subtractions, and the non-reset LS branch. It does not claim that retaining
-more potential necessarily improves accuracy.
+This mechanism experiment measures how much of the membrane used for each
+threshold decision comes from the current input and from each earlier input.
+It does **not** treat reset loss as an additional source and does not make an
+accuracy claim.
 
-The experiment directly runs the repository's `VanillaLIFNeuron` and
-`LSLIFNeuron` with the same deterministic input. Spikes and soft resets occur
-naturally when each neuron's effective membrane reaches threshold; reset times
-are not manually injected. A passive source ledger reconstructs the actual
-membrane at every step and aborts if the reconstruction differs from the real
-neuron state.
+The script directly runs the repository's `VanillaLIFNeuron` and
+`LSLIFNeuron`. Both receive the same deterministic input and reset naturally
+after threshold-triggered spikes. Immediately before each threshold decision,
+the source contributions sum to the real membrane produced by the neuron.
+
+After a soft reset, the observed residual main membrane is assigned back to
+its pre-reset input sources in the same proportions. For example, if sources
+`0.2` and `0.9` form a pre-reset membrane of `1.1` and reset leaves `0.1`, the
+residual contributions are `0.1 * 2/11` and `0.1 * 9/11`. This proportional
+provenance rule is an attribution convention: the neuron only defines the
+total soft-reset result, not which input source lost each part of the
+threshold. The LS source ledger is not reset.
 
 ## Run
 
@@ -21,40 +27,38 @@ python analysis/analyze_membrane_sources.py \
   --out-dir analysis_results/membrane_source_attribution
 ```
 
-The default input is a fixed charge/silence/recharge/silence sequence. A custom
-deterministic sequence can be supplied, for example:
+The default deterministic input is:
 
-```bash
-python analysis/analyze_membrane_sources.py \
-  --inputs 0.6 0.6 0.6 0.6 0 0 0 0 \
-  --history-weight 0.6 \
-  --history-power 1.0
+```text
+1.2 0.9 0 0 1.2 0.9 0 0 0 0
 ```
 
-Outputs:
+It creates natural charge/reset events followed by silent observation. A
+custom sequence can be supplied with `--inputs`.
 
-- `membrane_source_attribution.png`: signed LIF and LSLIF source stacks plus
-  LSLIF absolute-contribution percentages;
-- `membrane_source_trace.csv`: all per-step source terms and reconstruction
-  errors;
-- `membrane_source_summary.json`: configuration, reset counts, post-reset
-  historical contributions, and maximum reconstruction errors.
+## Outputs
 
-## Interpretation
+- `membrane_source_attribution.png` contains the actual pre-threshold membrane
+  traces, LIF-versus-LSLIF historical shares, current/history stacked shares,
+  and input-source-time heatmaps;
+- `membrane_source_trace.csv` contains current/history contributions and
+  counterfactual pre-threshold membranes for every decision step;
+- `membrane_source_by_input_time.csv` contains every source-time contribution;
+- `membrane_source_summary.json` reports spike counts, historical shares at
+  LSLIF spike steps, LS-history-dependent threshold crossings, and exact
+  reconstruction errors.
 
-The signed decomposition keeps reset loss separate from input-derived state:
+## Interpretation boundary
 
-- `main current input`: the present input in the resettable membrane;
-- `main past input`: decayed earlier inputs in the resettable membrane;
-- `reset loss`: the negative, decayed contribution of earlier soft resets;
-- `LS current input`: the LS branch's contribution from the present input;
-- `LS past input`: earlier inputs retained through the non-reset LS branch.
+The primary quantity is the pre-threshold decision membrane. Historical share
+is the fraction of that membrane descended from inputs at earlier time steps.
+For LSLIF, historical contribution is separated into the resettable main path
+and the non-reset LS path. A larger LS historical component shows that earlier
+inputs continue to participate in a later firing decision through LS.
 
-The percentage panel normalizes absolute contribution magnitudes because reset
-loss is negative and the net membrane can approach zero. It must be described
-as a source-magnitude percentage, not an algebraic share of the final
-membrane. The key mechanism result is a positive `LS past input` contribution
-after a natural reset, especially during zero-input steps. At the same time,
-the explicit negative `reset loss` remains visible. This supports the narrow
-claim that LS preserves additional input-derived potential outside the reset
-path; it does not claim that the reset subtraction itself becomes smaller.
+If the main membrane becomes negative after an LS-assisted spike, proportional
+main-path contributions become signed. The values still sum exactly to the
+real membrane, but they should be described as signed attributions rather than
+probabilities. The default input is chosen to keep the primary visualization
+simple. Retaining more historical membrane is a mechanism result only; whether
+it helps a task must be tested separately.
