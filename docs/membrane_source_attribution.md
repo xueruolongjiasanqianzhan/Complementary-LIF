@@ -5,10 +5,10 @@ threshold decision comes from the current input and from each earlier input.
 It does **not** treat reset loss as an additional source and does not make an
 accuracy claim.
 
-The script directly runs the repository's `VanillaLIFNeuron` and
-`LSLIFNeuron`. Both receive the same deterministic input and reset naturally
-after threshold-triggered spikes. Immediately before each threshold decision,
-the source contributions sum to the real membrane produced by the neuron.
+The script contains scalar LIF and LSLIF equations directly in the entry file.
+Both receive the same deterministic input and reset naturally after
+threshold-triggered spikes. Immediately before each threshold decision, the
+source contributions sum to the simulated membrane.
 
 After a soft reset, the observed residual main membrane is assigned back to
 its pre-reset input sources in the same proportions. For example, if sources
@@ -20,7 +20,7 @@ threshold. The LS source ledger is not reset.
 
 ## Run
 
-Use the normal training environment with PyTorch and SpikingJelly installed:
+Only NumPy and Matplotlib are required. From the repository root, run one file:
 
 ```bash
 python analysis/analyze_membrane_sources.py \

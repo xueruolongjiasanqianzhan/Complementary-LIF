@@ -1,6 +1,6 @@
 import unittest
 
-from analysis.membrane_source_ledger import ProportionalSourceLedger
+from analysis.analyze_membrane_sources import ProportionalSourceLedger, run_source_analysis
 
 
 class ProportionalSourceLedgerTest(unittest.TestCase):
@@ -34,6 +34,13 @@ class ProportionalSourceLedgerTest(unittest.TestCase):
         ledger.charge(0.0)
         with self.assertRaisesRegex(ValueError, 'zero source total'):
             ledger.redistribute(0.1)
+
+    def test_standalone_dynamics_reconstruct_every_decision(self):
+        rows, source_rows = run_source_analysis([1.2, 0.9, 0.0, 0.0])
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(len(source_rows), 10)
+        self.assertTrue(all(row['lif_reconstruction_error'] < 1e-12 for row in rows))
+        self.assertTrue(all(row['lslif_reconstruction_error'] < 1e-12 for row in rows))
 
 
 if __name__ == '__main__':

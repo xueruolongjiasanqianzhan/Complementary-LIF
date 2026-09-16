@@ -1,35 +1,49 @@
 #!/usr/bin/env python3
-"""Attribute pre-threshold LIF/LSLIF membranes to their input time steps.
+"""Standalone pre-threshold membrane provenance experiment for LIF/LSLIF.
 
-The repository's real neurons receive the same deterministic input.  After a
-soft reset, the residual main membrane is proportionally reassigned to its
-pre-reset input sources.  The LS source ledger is never reset.  This makes it
-possible to visualize how much current and historical input participates in
-each subsequent threshold decision without treating reset loss as a source.
+This file contains the scalar LIF/LSLIF dynamics, proportional source ledger,
+plotting, and CLI.  It needs no dataset, checkpoint, or repository-local Python
+module.  After a soft reset, the residual main membrane is proportionally
+reassigned to its pre-reset input sources; the LS source ledger is never reset.
 """
 
 import argparse
 import csv
 import json
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from analysis.membrane_source_ledger import ProportionalSourceLedger  # noqa: E402
-from modules.neuron import LSLIFNeuron, VanillaLIFNeuron  # noqa: E402
 
 
-def as_scalar(value):
-    if isinstance(value, torch.Tensor):
-        return float(value.detach().cpu().reshape(-1)[0])
-    return float(value)
+class ProportionalSourceLedger:
+    """Track membrane provenance by input time using proportional reset."""
+
+    def __init__(self, decay):
+        self.decay = float(decay)
+        self.sources = []
+
+    def charge(self, current_input):
+        self.sources = [value * self.decay for value in self.sources]
+        self.sources.append(float(current_input))
+
+    def redistribute(self, target_total, eps=1e-12):
+        source_total = self.total
+        target_total = float(target_total)
+        if abs(source_total) <= eps:
+            if abs(target_total) <= eps:
+                self.sources = [0.0 for _ in self.sources]
+                return
+            raise ValueError(
+                f'cannot proportionally assign nonzero membrane {target_total} '
+                'from zero source total'
+            )
+        scale = target_total / source_total
+        self.sources = [value * scale for value in self.sources]
+
+    @property
+    def total(self):
+        return sum(self.sources)
 
 
 def default_input_sequence():
@@ -49,70 +63,63 @@ def run_source_analysis(
     history_power=1.0,
     tolerance=2e-5,
 ):
-    """Run production neurons and attribute every pre-threshold decision."""
-    common = dict(tau=tau, decay_input=False, v_threshold=threshold, v_reset=None)
-    lif = VanillaLIFNeuron(**common)
-    lslif = LSLIFNeuron(
-        **common,
-        history_weight=history_weight,
-        history_power=history_power,
-        history_mode='all',
-    )
-    lslif.gradient_probe_enabled = True
-    lif.eval()
-    lslif.eval()
-
-    lif_sources = ProportionalSourceLedger(1.0 - 1.0 / tau)
-    ls_decay = max(0.0, min(1.0, 1.0 - 1.0 / (tau + lslif.tau_eps)))
+    """Run standalone scalar neurons and attribute every threshold decision."""
+    if tau <= 1.0:
+        raise ValueError(f'tau must be greater than 1 for stable leakage, got {tau}')
+    if threshold <= 0.0:
+        raise ValueError(f'threshold must be positive, got {threshold}')
+    decay = 1.0 - 1.0 / tau
+    lif_sources = ProportionalSourceLedger(decay)
+    ls_decay = decay
     ls_main_sources = ProportionalSourceLedger(ls_decay)
     ls_branch_sources = ProportionalSourceLedger(ls_decay)
+    lif_v = 0.0
+    ls_main_v = 0.0
+    ls_history_v = 0.0
     rows = []
     source_rows = []
 
-    with torch.no_grad():
-        for step, input_value in enumerate(inputs, start=1):
-            x = torch.tensor([float(input_value)], dtype=torch.float32)
-            lif_sources.charge(input_value)
-            ls_main_sources.charge(input_value)
-            ls_branch_sources.charge(input_value)
+    for step, input_value in enumerate(inputs, start=1):
+        input_value = float(input_value)
+        lif_sources.charge(input_value)
+        ls_main_sources.charge(input_value)
+        ls_branch_sources.charge(input_value)
 
-            lif_spike = as_scalar(lif(x))
-            ls_spike = as_scalar(lslif(x))
-            lif_pre = as_scalar(lif.last_v_pre)
-            ls_pre = as_scalar(lslif.last_v_pre)
-            alpha = as_scalar(
-                lslif._get_history_weight(lslif.n.dtype, lslif.n.device, lslif.step_count)
-            ) / (
-                (step + lslif.history_eps) ** as_scalar(
-                    lslif._get_history_power(lslif.n.dtype, lslif.n.device)
-                )
+        lif_pre = decay * lif_v + input_value
+        lif_spike = float(lif_pre >= threshold)
+        lif_v = lif_pre - lif_spike * threshold
+        ls_main_pre = ls_decay * ls_main_v + input_value
+        ls_history_v = ls_decay * ls_history_v + input_value
+        alpha = history_weight / (step ** history_power)
+        ls_pre = ls_main_pre + alpha * ls_history_v
+        ls_spike = float(ls_pre >= threshold)
+        ls_main_v = ls_main_pre - ls_spike * threshold
+
+        lif_values = list(lif_sources.sources)
+        ls_main_values = list(ls_main_sources.sources)
+        ls_branch_values = [alpha * value for value in ls_branch_sources.sources]
+        ls_total_values = [
+            main_value + branch_value
+            for main_value, branch_value in zip(ls_main_values, ls_branch_values)
+        ]
+        lif_error = abs(sum(lif_values) - lif_pre)
+        ls_error = abs(sum(ls_total_values) - ls_pre)
+        branch_error = abs(ls_branch_sources.total - ls_history_v)
+        if max(lif_error, ls_error, branch_error) > tolerance:
+            raise RuntimeError(
+                f'pre-threshold source reconstruction failed at step {step - 1}: '
+                f'lif={lif_error}, lslif={ls_error}, ls_branch={branch_error}'
             )
 
-            lif_values = list(lif_sources.sources)
-            ls_main_values = list(ls_main_sources.sources)
-            ls_branch_values = [alpha * value for value in ls_branch_sources.sources]
-            ls_total_values = [
-                main_value + branch_value
-                for main_value, branch_value in zip(ls_main_values, ls_branch_values)
-            ]
-            lif_error = abs(sum(lif_values) - lif_pre)
-            ls_error = abs(sum(ls_total_values) - ls_pre)
-            branch_error = abs(ls_branch_sources.total - as_scalar(lslif.n))
-            if max(lif_error, ls_error, branch_error) > tolerance:
-                raise RuntimeError(
-                    f'pre-threshold source reconstruction failed at step {step - 1}: '
-                    f'lif={lif_error}, lslif={ls_error}, ls_branch={branch_error}'
-                )
-
-            lif_current = lif_values[-1]
-            lif_history = sum(lif_values[:-1])
-            ls_main_current = ls_main_values[-1]
-            ls_main_history = sum(ls_main_values[:-1])
-            ls_branch_current = ls_branch_values[-1]
-            ls_branch_history = sum(ls_branch_values[:-1])
-            ls_current = ls_main_current + ls_branch_current
-            ls_history = ls_main_history + ls_branch_history
-            row = {
+        lif_current = lif_values[-1]
+        lif_history = sum(lif_values[:-1])
+        ls_main_current = ls_main_values[-1]
+        ls_main_history = sum(ls_main_values[:-1])
+        ls_branch_current = ls_branch_values[-1]
+        ls_branch_history = sum(ls_branch_values[:-1])
+        ls_current = ls_main_current + ls_branch_current
+        ls_history = ls_main_history + ls_branch_history
+        row = {
                 'step': step - 1,
                 'input': float(input_value),
                 'threshold': float(threshold),
@@ -140,11 +147,11 @@ def run_source_analysis(
                 'lslif_without_ls_history': ls_pre - ls_branch_history,
                 'lif_reconstruction_error': lif_error,
                 'lslif_reconstruction_error': ls_error,
-            }
-            rows.append(row)
+        }
+        rows.append(row)
 
-            for source_step in range(step):
-                source_rows.append({
+        for source_step in range(step):
+            source_rows.append({
                     'decision_step': step - 1,
                     'source_step': source_step,
                     'lif_contribution': lif_values[source_step],
@@ -153,14 +160,14 @@ def run_source_analysis(
                     'lslif_total_contribution': ls_total_values[source_step],
                     'lif_percent': _percent(lif_values[source_step], lif_pre),
                     'lslif_percent': _percent(ls_total_values[source_step], ls_pre),
-                })
+            })
 
-            lif_sources.redistribute(as_scalar(lif.v))
-            ls_main_sources.redistribute(as_scalar(lslif.v))
-            if abs(lif_sources.total - as_scalar(lif.v)) > tolerance:
-                raise RuntimeError(f'LIF post-reset attribution failed at step {step - 1}')
-            if abs(ls_main_sources.total - as_scalar(lslif.v)) > tolerance:
-                raise RuntimeError(f'LSLIF post-reset attribution failed at step {step - 1}')
+        lif_sources.redistribute(lif_v)
+        ls_main_sources.redistribute(ls_main_v)
+        if abs(lif_sources.total - lif_v) > tolerance:
+            raise RuntimeError(f'LIF post-reset attribution failed at step {step - 1}')
+        if abs(ls_main_sources.total - ls_main_v) > tolerance:
+            raise RuntimeError(f'LSLIF post-reset attribution failed at step {step - 1}')
     return rows, source_rows
 
 
@@ -261,11 +268,16 @@ def plot_results(rows, source_rows, output_path):
         ls_matrix, origin='lower', aspect='auto', vmin=0, vmax=common_max, cmap='viridis'
     )
     axes[2, 1].set(title='LSLIF: contribution by input source time', xlabel='decision step', ylabel='input source step')
-    fig.colorbar(image_lif, ax=axes[2, :], label='share of pre-threshold membrane (%)', shrink=0.8)
+    colorbar_axis = fig.add_axes([0.935, 0.08, 0.012, 0.20])
+    fig.colorbar(
+        image_lif,
+        cax=colorbar_axis,
+        label='share of pre-threshold membrane (%)',
+    )
     for ax in axes.flat:
         ax.grid(alpha=0.18)
     fig.suptitle('Proportional input provenance before each threshold decision')
-    fig.subplots_adjust(hspace=0.35, wspace=0.25, top=0.94, right=0.93)
+    fig.subplots_adjust(hspace=0.35, wspace=0.25, top=0.94, right=0.91)
     fig.savefig(output_path, dpi=180)
     plt.close(fig)
 

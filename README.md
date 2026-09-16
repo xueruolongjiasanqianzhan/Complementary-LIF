@@ -66,8 +66,9 @@ The first checkpoint-only history intervention is implemented in
 with usage and interpretation documented [here](docs/history_branch_intervention.md).
 The mechanism-only membrane-source attribution analysis is implemented in
 [`analysis/analyze_membrane_sources.py`](analysis/analyze_membrane_sources.py).
-It proportionally traces current and earlier inputs in the real pre-threshold
-decision membrane, separating the resettable main path from LS-retained history; see
+This standalone script proportionally traces current and earlier inputs in the
+pre-threshold decision membrane, separating the resettable main path from
+LS-retained history; see
 [`docs/membrane_source_attribution.md`](docs/membrane_source_attribution.md).
 
     # CIFAR-10 with LSLIF4
