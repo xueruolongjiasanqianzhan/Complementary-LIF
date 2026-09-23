@@ -38,12 +38,13 @@ custom sequence can be supplied with `--inputs`.
 
 The two source-time heatmaps plot the absolute value of each signed source
 percentage, while the CSV retains the original sign. They use a shared,
-reversed power-law color scale with `--heatmap-gamma 0.35` by default: larger
-magnitudes are darker and smaller magnitudes are lighter. The power transform
-expands color differences among small late-time contributions without changing
-their numerical magnitudes or the shared LIF/LSLIF scale. Use a smaller positive
-value (for example `0.2`) for more low-value contrast, or `1.0` for a linear
-color mapping:
+reversed palette and mirrored power-law scale with `--heatmap-gamma 0.35` by
+default: larger magnitudes are darker and smaller magnitudes are lighter. The
+nonuniform part of the scale is mirrored along with the color meaning, giving
+more color resolution to the high-value, dark end instead of retaining the old
+low-value emphasis. This does not change the numerical magnitudes or the shared
+LIF/LSLIF scale. Use a smaller positive value (for example `0.2`) for stronger
+high-value expansion, or `1.0` for a linear color mapping:
 
 ```bash
 python analysis/analyze_membrane_sources.py --heatmap-gamma 0.2

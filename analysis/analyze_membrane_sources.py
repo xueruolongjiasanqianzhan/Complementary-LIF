@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-from matplotlib.colors import PowerNorm
+from matplotlib.colors import FuncNorm
 import numpy as np
 
 
@@ -212,6 +212,21 @@ def _source_matrix(source_rows, key, steps, absolute=False):
     return matrix
 
 
+def _mirrored_power_norm(vmax, gamma):
+    """Expand high-value color resolution after mapping large values dark."""
+    vmax = float(vmax)
+
+    def forward(values):
+        unit = np.clip(np.asarray(values) / vmax, 0.0, 1.0)
+        return 1.0 - np.power(1.0 - unit, gamma)
+
+    def inverse(values):
+        unit = np.clip(np.asarray(values), 0.0, 1.0)
+        return vmax * (1.0 - np.power(1.0 - unit, 1.0 / gamma))
+
+    return FuncNorm((forward, inverse), vmin=0.0, vmax=vmax)
+
+
 def plot_results(rows, source_rows, output_path, heatmap_gamma=0.35):
     if heatmap_gamma <= 0.0:
         raise ValueError(f'heatmap_gamma must be positive, got {heatmap_gamma}')
@@ -267,10 +282,10 @@ def plot_results(rows, source_rows, output_path, heatmap_gamma=0.35):
     lif_matrix = _source_matrix(source_rows, 'lif_percent', len(rows), absolute=True)
     ls_matrix = _source_matrix(source_rows, 'lslif_percent', len(rows), absolute=True)
     common_max = max(np.nanmax(lif_matrix), np.nanmax(ls_matrix), 1.0)
-    # A power-law color normalization expands differences near zero while both
-    # heatmaps retain one shared scale.  gamma=1 recovers the linear mapping.
-    heatmap_norm = PowerNorm(gamma=heatmap_gamma, vmin=0, vmax=common_max)
-    # The reversed palette makes larger magnitudes dark and smaller ones light.
+    # Mirror the original power curve together with the palette: the nonlinear
+    # resolution is now concentrated at the dark, high-magnitude end rather
+    # than retaining the old light, low-value emphasis after the color reversal.
+    heatmap_norm = _mirrored_power_norm(common_max, heatmap_gamma)
     heatmap_cmap = plt.get_cmap('viridis_r').copy()
     heatmap_cmap.set_bad('white')
     image_lif = axes[2, 0].imshow(
@@ -293,7 +308,7 @@ def plot_results(rows, source_rows, output_path, heatmap_gamma=0.35):
     fig.colorbar(
         image_lif,
         cax=colorbar_axis,
-        label=f'absolute share of pre-threshold membrane (%)\npower color scale, γ={heatmap_gamma:g}',
+        label=f'absolute share of pre-threshold membrane (%)\nmirrored power scale, γ={heatmap_gamma:g}',
     )
     for ax in axes.flat:
         ax.grid(alpha=0.18)
