@@ -1,8 +1,11 @@
 import unittest
 
+import numpy as np
+
 from analysis.analyze_membrane_sources import (
     ProportionalSourceLedger,
     _mirrored_power_norm,
+    _log_heatmap_data,
     _source_matrix,
     plot_results,
     run_source_analysis,
@@ -67,6 +70,16 @@ class ProportionalSourceLedgerTest(unittest.TestCase):
         self.assertGreater(float(norm(80.0)), 0.4)
         for value in (0.0, 20.0, 80.0, 100.0):
             self.assertAlmostEqual(float(norm.inverse(norm(value))), value)
+
+    def test_log_heatmap_gives_equal_space_to_each_decade(self):
+        lif = np.asarray([[100.0, 0.1], [np.nan, 0.0]])
+        lslif = np.asarray([[10.0, 0.01], [1.0, 0.001]])
+        lif_plot, lslif_plot, norm = _log_heatmap_data(lif, lslif, decades=5)
+        self.assertAlmostEqual(float(norm(0.1) - norm(0.01)), 0.2)
+        self.assertAlmostEqual(float(norm(0.01) - norm(0.001)), 0.2)
+        self.assertEqual(lif_plot[1, 1], norm.vmin)
+        self.assertTrue(np.isnan(lif_plot[1, 0]))
+        self.assertEqual(lslif_plot[1, 1], 0.001)
 
 
 if __name__ == '__main__':

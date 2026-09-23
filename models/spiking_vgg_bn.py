@@ -338,8 +338,8 @@ class SpikingVGGBN(nn.Module):
         self.layer_index = 0
         self.rplif_lif_head = bool(kwargs.pop('rplif_lif_head', False))
         self.rplif_lif_head_neuron = kwargs.pop('rplif_lif_head_neuron', None)
-        if self.rplif_lif_head and getattr(neuron, '__name__', '') != 'RPLIFNeuron':
-            raise ValueError('rplif_lif_head can only be used with RPLIFNeuron.')
+        if self.rplif_lif_head and getattr(neuron, '__name__', '') not in {'RPLIFNeuron', 'LSRPLIFNeuron'}:
+            raise ValueError('rplif_lif_head can only be used with RPLIFNeuron or LSRPLIFNeuron.')
         if self.rplif_lif_head and self.rplif_lif_head_neuron is None:
             raise ValueError('rplif_lif_head_neuron is required when rplif_lif_head is enabled.')
 

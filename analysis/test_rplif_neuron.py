@@ -59,6 +59,15 @@ class RPLIFLIFHeadTest(unittest.TestCase):
         model = spiking_resnet18(neuron=RPLIFNeuron)
         self.assertIsInstance(model.relu1, RPLIFNeuron)
 
+    def test_lsrplif_can_use_the_same_lif_head(self):
+        model = spiking_resnet18(
+            neuron=LSRPLIFNeuron,
+            rplif_lif_head=True,
+            rplif_lif_head_neuron=VanillaLIFNeuron,
+        )
+        self.assertIsInstance(model.relu1, VanillaLIFNeuron)
+        self.assertIsInstance(model.layer4[-1].relu2, LSRPLIFNeuron)
+
     def test_only_final_vgg_neuron_is_replaced(self):
         model = spiking_vgg11_bn(
             neuron=RPLIFNeuron,

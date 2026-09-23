@@ -200,7 +200,7 @@ def main():
     parser.add_argument('-rplif_alpha', type=float, default=1.5, help='for RPLIF/LSRPLIF only: multiplicative spike-triggered threshold factor')
     parser.add_argument('-rplif_v_init_th', type=float, default=None, help='for RPLIF/LSRPLIF only: initial dynamic threshold; defaults to v_threshold')
     parser.add_argument('-refractory_step', type=int, default=1, help='for RPLIF/LSRPLIF only: paper default is 1')
-    parser.add_argument('-rplif_lif_head', action='store_true', help='for RPLIF ResNet/VGG only: replace only the final pre-classifier RPLIF neuron with vanilla LIF')
+    parser.add_argument('-rplif_lif_head', action='store_true', help='for RPLIF/LSRPLIF ResNet/VGG only: replace only the final pre-classifier neuron with vanilla LIF')
     parser.add_argument('-lsrplif_history_start_step', type=int, default=1, help='for LSRPLIF only: first time step that adds the accumulated LS history to the firing membrane')
     parser.add_argument('-tlif_lambda', type=float, default=0.5, help='for TLIF only: per-step threshold growth ratio based on the current-prev threshold gap')
     parser.add_argument('-tlif_theta', type=float, default=None, help='for TLIF only: base threshold interval; defaults to v_threshold')
@@ -275,8 +275,8 @@ def main():
         raise ValueError('-synaptic_release_groups is only supported when -synaptic_release_mode full.')
     if args.synaptic_release_enable and args.model not in ['spiking_vgg11_bn', 'spiking_vgg13_bn', 'spiking_vgg16_bn', 'spiking_vgg19_bn', 'dvscifar10_fc2']:
         raise NotImplementedError('-synaptic_release_enable is currently implemented for spiking_vgg*_bn and dvscifar10_fc2 models only.')
-    if args.rplif_lif_head and args.neuron_model != 'RPLIF':
-        raise ValueError('-rplif_lif_head is only valid with -neuron_model RPLIF.')
+    if args.rplif_lif_head and args.neuron_model not in ['RPLIF', 'LSRPLIF']:
+        raise ValueError('-rplif_lif_head is only valid with -neuron_model RPLIF or LSRPLIF.')
     if args.rplif_lif_head and not (args.model.startswith('spiking_resnet') or args.model.startswith('spiking_vgg')):
         raise ValueError('-rplif_lif_head is currently implemented only for spiking_resnet and spiking_vgg models.')
     if args.neuron_model == 'LSLIF2' and (args.history_learn_power or abs(float(args.history_power) - 1.0) > 1e-12):
@@ -707,7 +707,7 @@ def main():
         neuron_kwargs['ternary_decay'] = args.ternary_decay
     if args.neuron_model == 'LSRPLIF':
         neuron_kwargs['lsrplif_history_start_step'] = args.lsrplif_history_start_step
-    if args.neuron_model == 'RPLIF' and args.rplif_lif_head:
+    if args.neuron_model in ['RPLIF', 'LSRPLIF'] and args.rplif_lif_head:
         neuron_kwargs['rplif_lif_head'] = True
         neuron_kwargs['rplif_lif_head_neuron'] = neuron.VanillaLIFNeuron
 
@@ -937,7 +937,7 @@ def main():
         ])
         if args.neuron_model == 'LSRPLIF':
             run_name_parts.append(f'LSstart{args.lsrplif_history_start_step}')
-        if args.neuron_model == 'RPLIF' and args.rplif_lif_head:
+        if args.rplif_lif_head:
             run_name_parts.append('LIFhead')
     if args.neuron_model == 'QKVLIF':
         alpha_can_learn = '是' if args.qkv_learn_alpha else '否'

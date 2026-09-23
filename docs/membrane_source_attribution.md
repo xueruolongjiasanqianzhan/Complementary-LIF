@@ -50,6 +50,14 @@ high-value expansion, or `1.0` for a linear color mapping:
 python analysis/analyze_membrane_sources.py --heatmap-gamma 0.2
 ```
 
+The script also writes log-normalized heatmap candidates spanning 2, 3, 4, and
+5 decades below the shared maximum. On these plots, each factor-of-ten interval
+receives equal color distance, so `0.1` versus `0.01` is as visible as `0.01`
+versus `0.001`. All candidates use `viridis_r`; one additional 4-decade
+`magma_r` candidate isolates the effect of changing the palette. Configure them
+with `--heatmap-log-decades`, `--heatmap-log-cmap`, and
+`--heatmap-log-alternate-cmap`.
+
 ## Outputs
 
 - `membrane_source_attribution.png` contains the actual pre-threshold membrane
