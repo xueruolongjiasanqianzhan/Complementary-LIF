@@ -3,6 +3,9 @@ import unittest
 import torch
 
 from modules.neuron import LSRPLIFNeuron
+from modules.neuron import RPLIFNeuron, VanillaLIFNeuron
+from models.spiking_resnet import spiking_resnet18
+from models.spiking_vgg_bn import spiking_vgg11_bn
 
 
 class LSRPLIFHistoryStartTest(unittest.TestCase):
@@ -38,6 +41,36 @@ class LSRPLIFHistoryStartTest(unittest.TestCase):
     def test_start_step_must_be_positive(self):
         with self.assertRaisesRegex(ValueError, 'must be at least 1'):
             LSRPLIFNeuron(lsrplif_history_start_step=0)
+
+
+class RPLIFLIFHeadTest(unittest.TestCase):
+    def test_only_final_resnet_neuron_is_replaced(self):
+        model = spiking_resnet18(
+            neuron=RPLIFNeuron,
+            rplif_lif_head=True,
+            rplif_lif_head_neuron=VanillaLIFNeuron,
+        )
+
+        self.assertIsInstance(model.relu1, VanillaLIFNeuron)
+        self.assertIsInstance(model.layer1[0].relu1, RPLIFNeuron)
+        self.assertIsInstance(model.layer4[-1].relu2, RPLIFNeuron)
+
+    def test_default_keeps_final_rplif_neuron(self):
+        model = spiking_resnet18(neuron=RPLIFNeuron)
+        self.assertIsInstance(model.relu1, RPLIFNeuron)
+
+    def test_only_final_vgg_neuron_is_replaced(self):
+        model = spiking_vgg11_bn(
+            neuron=RPLIFNeuron,
+            rplif_lif_head=True,
+            rplif_lif_head_neuron=VanillaLIFNeuron,
+        )
+        neurons = [
+            module for module in model.modules()
+            if isinstance(module, (RPLIFNeuron, VanillaLIFNeuron))
+        ]
+        self.assertTrue(all(isinstance(module, RPLIFNeuron) for module in neurons[:-1]))
+        self.assertIsInstance(neurons[-1], VanillaLIFNeuron)
 
 
 if __name__ == '__main__':
