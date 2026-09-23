@@ -2,6 +2,7 @@ import unittest
 
 from analysis.analyze_membrane_sources import (
     ProportionalSourceLedger,
+    _source_matrix,
     plot_results,
     run_source_analysis,
 )
@@ -49,6 +50,15 @@ class ProportionalSourceLedgerTest(unittest.TestCase):
     def test_heatmap_gamma_must_be_positive(self):
         with self.assertRaisesRegex(ValueError, 'heatmap_gamma must be positive'):
             plot_results([], [], 'unused.png', heatmap_gamma=0.0)
+
+    def test_source_matrix_can_plot_absolute_contributions(self):
+        source_rows = [{
+            'source_step': 0,
+            'decision_step': 1,
+            'signed_percent': -25.0,
+        }]
+        matrix = _source_matrix(source_rows, 'signed_percent', 2, absolute=True)
+        self.assertEqual(matrix[0, 1], 25.0)
 
 
 if __name__ == '__main__':
