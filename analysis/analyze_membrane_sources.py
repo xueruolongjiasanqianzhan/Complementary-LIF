@@ -204,10 +204,11 @@ def summarize(rows):
     }
 
 
-def _source_matrix(source_rows, key, steps):
+def _source_matrix(source_rows, key, steps, absolute=False):
     matrix = np.full((steps, steps), np.nan)
     for row in source_rows:
-        matrix[row['source_step'], row['decision_step']] = row[key]
+        value = row[key]
+        matrix[row['source_step'], row['decision_step']] = abs(value) if absolute else value
     return matrix
 
 
@@ -260,13 +261,17 @@ def plot_results(rows, source_rows, output_path, heatmap_gamma=0.35):
     axes[1, 1].set(title='LSLIF decision-membrane provenance', ylabel='percent', ylim=(0, 100))
     axes[1, 1].legend(loc='upper right')
 
-    lif_matrix = _source_matrix(source_rows, 'lif_percent', len(rows))
-    ls_matrix = _source_matrix(source_rows, 'lslif_percent', len(rows))
+    # Signed source attributions are retained in the CSV, while the heatmaps
+    # visualize their magnitudes so negative contributions are not clipped by
+    # the zero-based color normalization.
+    lif_matrix = _source_matrix(source_rows, 'lif_percent', len(rows), absolute=True)
+    ls_matrix = _source_matrix(source_rows, 'lslif_percent', len(rows), absolute=True)
     common_max = max(np.nanmax(lif_matrix), np.nanmax(ls_matrix), 1.0)
     # A power-law color normalization expands differences near zero while both
     # heatmaps retain one shared scale.  gamma=1 recovers the linear mapping.
     heatmap_norm = PowerNorm(gamma=heatmap_gamma, vmin=0, vmax=common_max)
-    heatmap_cmap = plt.get_cmap('viridis').copy()
+    # The reversed palette makes larger magnitudes dark and smaller ones light.
+    heatmap_cmap = plt.get_cmap('viridis_r').copy()
     heatmap_cmap.set_bad('white')
     image_lif = axes[2, 0].imshow(
         lif_matrix,
@@ -288,7 +293,7 @@ def plot_results(rows, source_rows, output_path, heatmap_gamma=0.35):
     fig.colorbar(
         image_lif,
         cax=colorbar_axis,
-        label=f'share of pre-threshold membrane (%)\npower color scale, γ={heatmap_gamma:g}',
+        label=f'absolute share of pre-threshold membrane (%)\npower color scale, γ={heatmap_gamma:g}',
     )
     for ax in axes.flat:
         ax.grid(alpha=0.18)

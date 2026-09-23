@@ -200,6 +200,7 @@ def main():
     parser.add_argument('-rplif_alpha', type=float, default=1.5, help='for RPLIF/LSRPLIF only: multiplicative spike-triggered threshold factor')
     parser.add_argument('-rplif_v_init_th', type=float, default=None, help='for RPLIF/LSRPLIF only: initial dynamic threshold; defaults to v_threshold')
     parser.add_argument('-refractory_step', type=int, default=1, help='for RPLIF/LSRPLIF only: paper default is 1')
+    parser.add_argument('-lsrplif_history_start_step', type=int, default=1, help='for LSRPLIF only: first time step that adds the accumulated LS history to the firing membrane')
     parser.add_argument('-tlif_lambda', type=float, default=0.5, help='for TLIF only: per-step threshold growth ratio based on the current-prev threshold gap')
     parser.add_argument('-tlif_theta', type=float, default=None, help='for TLIF only: base threshold interval; defaults to v_threshold')
     parser.add_argument('-tlif_alpha', type=float, default=0.5, help='deprecated for TLIF: ignored by the LSLIF-aligned implementation')
@@ -699,6 +700,8 @@ def main():
         neuron_kwargs['v_reset'] = args.halif_v_reset
     if args.neuron_model in ['Ternary', 'LSTernary']:
         neuron_kwargs['ternary_decay'] = args.ternary_decay
+    if args.neuron_model == 'LSRPLIF':
+        neuron_kwargs['lsrplif_history_start_step'] = args.lsrplif_history_start_step
 
     if args.model in ['spiking_resnet18', 'spiking_resnet34', 'spiking_resnet50', 'spiking_resnet101', 'spiking_resnet152']:
         net = spiking_resnet.__dict__[args.model](neuron=neuron_model, num_classes=num_classes,
@@ -924,6 +927,8 @@ def main():
             f'RPLIFinit{args.v_threshold if args.rplif_v_init_th is None else args.rplif_v_init_th}',
             f'RPLIFstep{args.refractory_step}',
         ])
+        if args.neuron_model == 'LSRPLIF':
+            run_name_parts.append(f'LSstart{args.lsrplif_history_start_step}')
     if args.neuron_model == 'QKVLIF':
         alpha_can_learn = '是' if args.qkv_learn_alpha else '否'
         weights_can_learn = '是' if args.qkv_learn_w else '否'

@@ -946,13 +946,17 @@ class LSRPLIFNeuron(LSLIFNeuron):
     """LSLIF auxiliary-history branch plus RPLIF dynamic thresholds."""
 
     def __init__(self, *args, rplif_alpha: float = 1.5, rplif_v_init_th: Optional[float] = None,
-                 refractory_step: int = 1, detach_reset: bool = True, **kwargs):
+                 refractory_step: int = 1, lsrplif_history_start_step: int = 1,
+                 detach_reset: bool = True, **kwargs):
         if int(refractory_step) != 1:
             raise ValueError('LSRPLIF currently implements the paper default refractory_step=1 threshold dynamics.')
+        if int(lsrplif_history_start_step) < 1:
+            raise ValueError('lsrplif_history_start_step must be at least 1.')
         super().__init__(*args, detach_reset=detach_reset, **kwargs)
         self.v_init_th = float(self.v_threshold if rplif_v_init_th is None else rplif_v_init_th)
         self.rplif_alpha = float(rplif_alpha)
         self.refractory_step = int(refractory_step)
+        self.lsrplif_history_start_step = int(lsrplif_history_start_step)
         self.dynamic_threshold = None
 
     def reset(self):
@@ -982,6 +986,8 @@ class LSRPLIFNeuron(LSLIFNeuron):
         history_term = self._get_history_weight(dtype=m_t.dtype, device=m_t.device, step_count=self.step_count) * (n_t / norm)
         if self.history_mode == 'post_spike':
             history_term = history_term * self.has_fired.to(dtype=history_term.dtype)
+        if self.step_count < self.lsrplif_history_start_step:
+            history_term = torch.zeros_like(history_term)
         total_mem = m_t + history_term
 
         threshold = self.dynamic_threshold.to(device=total_mem.device, dtype=total_mem.dtype)
