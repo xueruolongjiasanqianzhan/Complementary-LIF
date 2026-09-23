@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""被试内 EEG segment 数据上的 chunk-based Spiking EEGNet：LIF vs LSLIF。
+"""跨被试 EEG patient-fold 数据上的 chunk-based Spiking EEGNet：LIF vs LSLIF。
 
 输入 ``[B, 1, 61, 750]`` 沿采样轴切成 30 个互不重叠的 25 点 chunk。每个
 chunk 直接作为一个 SNN 时间步输入共享权重的 EEGNet，不做脉冲编码，也不在
@@ -29,9 +29,9 @@ from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader, Dataset
 
 
-DEFAULT_TRAIN_DIR = "/home/guyue/zhao/PythonProject/dataset/Self-data/kFold/kFold(61x750)/new-segment/train/"
-DEFAULT_TEST_DIR = "/home/guyue/zhao/PythonProject/dataset/Self-data/kFold/kFold(61x750)/new-segment/test/"
-DEFAULT_OUTPUT_DIR = "all_result/spiking_eegnet/segment_lif_vs_lslif/"
+DEFAULT_TRAIN_DIR = "/home/guyue/zhao/PythonProject/dataset/Self-data/kFold/kFold(61x750)/10fold-patient-data/train2/"
+DEFAULT_TEST_DIR = "/home/guyue/zhao/PythonProject/dataset/Self-data/kFold/kFold(61x750)/10fold-patient-data/test2/"
+DEFAULT_OUTPUT_DIR = "all_result/spiking_eegnet/patient_lif_vs_lslif/"
 
 
 class RectangleSpike(torch.autograd.Function):
@@ -192,7 +192,7 @@ class SpikingEEGNet(nn.Module):
     """Chunk-based EEGNet-like SNN，支持 tiny 和 full 两种容量。"""
 
     def __init__(self, neuron_type, channels=61, num_classes=2, chunk_size=25,
-                 architecture="tiny", f1=4, depth_multiplier=1, f2=16,
+                 architecture="full", f1=4, depth_multiplier=1, f2=16,
                  temporal_kernel=15, separable_kernel=7, dropout=0.25,
                  **neuron_kwargs):
         super().__init__()
@@ -406,7 +406,7 @@ def parse_args():
     parser.add_argument("--channels", type=int, default=61)
     parser.add_argument("--num-classes", type=int, default=2)
     parser.add_argument("--chunk-size", type=int, default=25)
-    parser.add_argument("--architecture", default="tiny", choices=["tiny", "full"],
+    parser.add_argument("--architecture", default="full", choices=["tiny", "full"],
                         help="tiny removes the second separable-convolution/spiking block")
     parser.add_argument("--f1", type=int, default=4)
     parser.add_argument("--depth-multiplier", type=int, default=1)
