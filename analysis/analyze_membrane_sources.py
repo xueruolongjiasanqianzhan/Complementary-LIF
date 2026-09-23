@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-from matplotlib.colors import PowerNorm
+from matplotlib.colors import FuncNorm, LogNorm
 import numpy as np
 
 
@@ -204,11 +204,76 @@ def summarize(rows):
     }
 
 
-def _source_matrix(source_rows, key, steps):
+def _source_matrix(source_rows, key, steps, absolute=False):
     matrix = np.full((steps, steps), np.nan)
     for row in source_rows:
-        matrix[row['source_step'], row['decision_step']] = row[key]
+        value = row[key]
+        matrix[row['source_step'], row['decision_step']] = abs(value) if absolute else value
     return matrix
+
+
+def _mirrored_power_norm(vmax, gamma):
+    """Expand high-value color resolution after mapping large values dark."""
+    vmax = float(vmax)
+
+    def forward(values):
+        unit = np.clip(np.asarray(values) / vmax, 0.0, 1.0)
+        return 1.0 - np.power(1.0 - unit, gamma)
+
+    def inverse(values):
+        unit = np.clip(np.asarray(values), 0.0, 1.0)
+        return vmax * (1.0 - np.power(1.0 - unit, 1.0 / gamma))
+
+    return FuncNorm((forward, inverse), vmin=0.0, vmax=vmax)
+
+
+def _log_heatmap_data(lif_matrix, ls_matrix, decades):
+    """Return shared log-scale matrices spanning ``decades`` below the maximum."""
+    if decades <= 0:
+        raise ValueError(f'log heatmap decades must be positive, got {decades}')
+    common_max = max(np.nanmax(lif_matrix), np.nanmax(ls_matrix), 1.0)
+    vmin = common_max * (10.0 ** -float(decades))
+
+    def clipped(matrix):
+        return np.where(np.isnan(matrix), np.nan, np.maximum(matrix, vmin))
+
+    return clipped(lif_matrix), clipped(ls_matrix), LogNorm(vmin=vmin, vmax=common_max)
+
+
+def plot_log_heatmap_variants(rows, source_rows, output_dir, decades_options=(2, 3, 4, 5),
+                              cmap_name='viridis_r', alternate_cmap='magma_r'):
+    """Write log-normalized source heatmaps plus one alternate-color candidate."""
+    lif_matrix = _source_matrix(source_rows, 'lif_percent', len(rows), absolute=True)
+    ls_matrix = _source_matrix(source_rows, 'lslif_percent', len(rows), absolute=True)
+    output_dir = Path(output_dir)
+
+    variants = [(int(decades), cmap_name) for decades in decades_options]
+    if alternate_cmap:
+        reference_decades = int(decades_options[len(decades_options) // 2])
+        variants.append((reference_decades, alternate_cmap))
+
+    for decades, variant_cmap in variants:
+        lif_plot, ls_plot, norm = _log_heatmap_data(lif_matrix, ls_matrix, decades)
+        cmap = plt.get_cmap(variant_cmap).copy()
+        cmap.set_bad('white')
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4.2))
+        image_lif = axes[0].imshow(lif_plot, origin='lower', aspect='auto', norm=norm, cmap=cmap)
+        axes[0].set(title='LIF: contribution by input source time', xlabel='decision step', ylabel='input source step')
+        axes[1].imshow(ls_plot, origin='lower', aspect='auto', norm=norm, cmap=cmap)
+        axes[1].set(title='LSLIF: contribution by input source time', xlabel='decision step', ylabel='input source step')
+        for ax in axes:
+            ax.grid(alpha=0.18)
+        fig.colorbar(
+            image_lif,
+            ax=axes,
+            label=f'absolute share of pre-threshold membrane (%)\nlog scale, {decades} decades',
+            fraction=0.025,
+            pad=0.04,
+        )
+        fig.subplots_adjust(left=0.08, right=0.88, bottom=0.16, top=0.88, wspace=0.28)
+        safe_cmap = variant_cmap.replace('/', '_')
+        fig.savefig(output_dir / f'membrane_source_heatmap_log_{decades}dec_{safe_cmap}.png', dpi=180)
+        plt.close(fig)
 
 
 def plot_results(rows, source_rows, output_path, heatmap_gamma=0.35):
@@ -260,13 +325,17 @@ def plot_results(rows, source_rows, output_path, heatmap_gamma=0.35):
     axes[1, 1].set(title='LSLIF decision-membrane provenance', ylabel='percent', ylim=(0, 100))
     axes[1, 1].legend(loc='upper right')
 
-    lif_matrix = _source_matrix(source_rows, 'lif_percent', len(rows))
-    ls_matrix = _source_matrix(source_rows, 'lslif_percent', len(rows))
+    # Signed source attributions are retained in the CSV, while the heatmaps
+    # visualize their magnitudes so negative contributions are not clipped by
+    # the zero-based color normalization.
+    lif_matrix = _source_matrix(source_rows, 'lif_percent', len(rows), absolute=True)
+    ls_matrix = _source_matrix(source_rows, 'lslif_percent', len(rows), absolute=True)
     common_max = max(np.nanmax(lif_matrix), np.nanmax(ls_matrix), 1.0)
-    # A power-law color normalization expands differences near zero while both
-    # heatmaps retain one shared scale.  gamma=1 recovers the linear mapping.
-    heatmap_norm = PowerNorm(gamma=heatmap_gamma, vmin=0, vmax=common_max)
-    heatmap_cmap = plt.get_cmap('viridis').copy()
+    # Mirror the original power curve together with the palette: the nonlinear
+    # resolution is now concentrated at the dark, high-magnitude end rather
+    # than retaining the old light, low-value emphasis after the color reversal.
+    heatmap_norm = _mirrored_power_norm(common_max, heatmap_gamma)
+    heatmap_cmap = plt.get_cmap('viridis_r').copy()
     heatmap_cmap.set_bad('white')
     image_lif = axes[2, 0].imshow(
         lif_matrix,
@@ -288,7 +357,7 @@ def plot_results(rows, source_rows, output_path, heatmap_gamma=0.35):
     fig.colorbar(
         image_lif,
         cax=colorbar_axis,
-        label=f'share of pre-threshold membrane (%)\npower color scale, γ={heatmap_gamma:g}',
+        label=f'absolute share of pre-threshold membrane (%)\nmirrored power scale, γ={heatmap_gamma:g}',
     )
     for ax in axes.flat:
         ax.grid(alpha=0.18)
@@ -316,8 +385,17 @@ def main(argv=None):
         '--heatmap-gamma',
         type=float,
         default=0.35,
-        help='Power-law heatmap color exponent; smaller values emphasize low percentages.',
+        help='Mirrored power-law exponent; smaller values emphasize high percentages.',
     )
+    parser.add_argument(
+        '--heatmap-log-decades',
+        type=int,
+        nargs='+',
+        default=[2, 3, 4, 5],
+        help='Log-scale candidate ranges below the shared maximum.',
+    )
+    parser.add_argument('--heatmap-log-cmap', default='viridis_r')
+    parser.add_argument('--heatmap-log-alternate-cmap', default='magma_r')
     parser.add_argument('--inputs', type=float, nargs='+')
     args = parser.parse_args(argv)
     inputs = args.inputs if args.inputs is not None else default_input_sequence()
@@ -340,6 +418,9 @@ def main(argv=None):
             'history_weight': args.history_weight,
             'history_power': args.history_power,
             'heatmap_gamma': args.heatmap_gamma,
+            'heatmap_log_decades': args.heatmap_log_decades,
+            'heatmap_log_cmap': args.heatmap_log_cmap,
+            'heatmap_log_alternate_cmap': args.heatmap_log_alternate_cmap,
             'reset': 'natural spike-triggered soft reset',
             'attribution': 'proportional redistribution of residual main membrane',
         },
@@ -354,6 +435,14 @@ def main(argv=None):
         source_rows,
         output_dir / 'membrane_source_attribution.png',
         heatmap_gamma=args.heatmap_gamma,
+    )
+    plot_log_heatmap_variants(
+        rows,
+        source_rows,
+        output_dir,
+        decades_options=args.heatmap_log_decades,
+        cmap_name=args.heatmap_log_cmap,
+        alternate_cmap=args.heatmap_log_alternate_cmap,
     )
     print(json.dumps(result, indent=2))
 
