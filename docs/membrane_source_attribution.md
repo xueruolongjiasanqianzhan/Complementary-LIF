@@ -36,11 +36,14 @@ The default deterministic input is:
 It creates natural charge/reset events followed by silent observation. A
 custom sequence can be supplied with `--inputs`.
 
-The two source-time heatmaps use a shared power-law color scale with
-`--heatmap-gamma 0.35` by default. This expands color differences among small
-late-time contributions without changing their numerical percentages or the
-shared LIF/LSLIF scale. Use a smaller positive value (for example `0.2`) for
-more low-value contrast, or `1.0` for the original linear color mapping:
+The two source-time heatmaps plot the absolute value of each signed source
+percentage, while the CSV retains the original sign. They use a shared,
+reversed power-law color scale with `--heatmap-gamma 0.35` by default: larger
+magnitudes are darker and smaller magnitudes are lighter. The power transform
+expands color differences among small late-time contributions without changing
+their numerical magnitudes or the shared LIF/LSLIF scale. Use a smaller positive
+value (for example `0.2`) for more low-value contrast, or `1.0` for a linear
+color mapping:
 
 ```bash
 python analysis/analyze_membrane_sources.py --heatmap-gamma 0.2
