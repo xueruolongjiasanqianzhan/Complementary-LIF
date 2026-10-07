@@ -126,7 +126,7 @@ def main():
     parser.add_argument('-mse_n_reg', action='store_true', help='loss function setting')
     parser.add_argument('-loss_means', type=float, default=1.0, help='used in the loss function when mse_n_reg=False')
     parser.add_argument('-save_init', action='store_true', help='save the initialization of parameters')
-    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: LIF (vanilla), GLIF, LSGLIF, SRLIF (Synaptic Release LIF), SCRLIF (Spike-Cause Reset LIF), SCRLIFV2, HALIF, ZELIF, IDISILIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, RPLIF, LSRPLIF, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, Ternary, LSTernary, QKVLIF, CLIF, PLIF, relu')
+    parser.add_argument('-neuron_model', type=str, default='LIF', help='neuron model: MSF, LSMSF, LIF (vanilla), GLIF, LSGLIF, SRLIF (Synaptic Release LIF), SCRLIF (Spike-Cause Reset LIF), SCRLIFV2, HALIF, ZELIF, IDISILIF, newLIF (adaptive tau), newLIFTauDep (tau-dependent adaptive tau), newCLIF (CLIF + tau-dependent adaptive tau), DTLIF (direct rho update), DGN, LIFDGN, LIFDGN2, LIFDGN3, RPLIF, LSRPLIF, LSLIF, LSLIF2, LSLIF3, LSLIF4, LSCLIF, LSPLIF, RCMLIF, TLIF, Ternary, LSTernary, QKVLIF, CLIF, PLIF, relu')
     parser.add_argument('-zelif_alpha', type=float, default=0.1, help='for ZELIF only: scale factor alpha for pattern branch')
     parser.add_argument('-idisi_max_inverse_decay', type=float, default=8.0, help='for IDISILIF only: clamp for inverse-decay ISI credit')
     parser.add_argument('-idisi_eps', type=float, default=1e-6, help='for IDISILIF only: numerical epsilon for threshold and decay')
@@ -256,12 +256,18 @@ def main():
     parser.add_argument('-lifdgn_disable_temporal', action='store_true', help='for LIFDGN only: skip temporal bilinear branch computation entirely')
     parser.set_defaults(dgn_learn_c=True, dgn_learn_w=True, lifdgn_learn_g0=True, lifdgn_learn_c=True)
 
+    parser.add_argument('-msf_D', type=int, default=4, help='for MSF/LSMSF: number of fixed thresholds')
+    parser.add_argument('-msf_threshold', type=float, default=1.0, help='for MSF/LSMSF: first threshold; remaining thresholds are spaced by 1')
+    parser.add_argument('-msf_decay', type=float, default=0.25, help='for MSF/LSMSF: fixed membrane retention, independent of tau')
+    parser.add_argument('-msf_alpha', type=float, default=0.5, help='for MSF/LSMSF: rectangular surrogate half-width')
+
     args = parser.parse_args()
+    msf_config = neuron.msf_experiment_config(args)
     if args.v_threshold <= 0.0:
         raise ValueError('-v_threshold must be positive.')
     if args.fc_hidden_dim <= 0:
         raise ValueError('-fc_hidden_dim must be positive.')
-    if args.release_threshold_init < args.v_threshold:
+    if msf_config is None and args.release_threshold_init < args.v_threshold:
         raise ValueError('-release_threshold_init must be at least -v_threshold.')
     if not 0.0 <= args.srlif_release_ratio <= 1.0:
         raise ValueError('-srlif_release_ratio must be in [0, 1].')
@@ -548,6 +554,10 @@ def main():
         neuron_model = neuron.RPLIFNeuron
     elif args.neuron_model == 'LSRPLIF':
         neuron_model = neuron.LSRPLIFNeuron
+    elif args.neuron_model == 'MSF':
+        neuron_model = neuron.MSFNeuron
+    elif args.neuron_model == 'LSMSF':
+        neuron_model = neuron.LSMSFNeuron
     elif args.neuron_model == 'LSLIF':
         neuron_model = neuron.LSLIFNeuron
     elif args.neuron_model == 'LSLIF2':
@@ -579,6 +589,10 @@ def main():
         raise NotImplementedError
 
     neuron_kwargs = dict(
+        msf_D=args.msf_D,
+        msf_threshold=args.msf_threshold,
+        msf_decay=args.msf_decay,
+        msf_alpha=args.msf_alpha,
         tau=args.tau,
         v_threshold=args.v_threshold,
         glif_alpha=args.glif_alpha,
@@ -770,6 +784,8 @@ def main():
     if args.resume:
         print('resuming...')
         checkpoint = torch.load(args.resume, map_location='cpu')
+        if msf_config is not None and checkpoint.get('neuron_config', msf_config) != msf_config:
+            raise ValueError('MSF/LSMSF checkpoint configuration differs from CLI settings; use the saved experiment_args.')
         net.load_state_dict(checkpoint['net'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
@@ -991,6 +1007,8 @@ def main():
     # if args.cutupmix_auto:
     #     run_name_parts.append('CutUpMix自动增强是')
 
+    if msf_config is not None:
+        run_name_parts.append(neuron.msf_run_tag(msf_config))
     out_dir = os.path.join(args.out_dir, '_'.join(run_name_parts))
 
     is_main_process = (not use_ddp) or dist.get_rank() == 0
@@ -1007,6 +1025,9 @@ def main():
             'epoch': 0,
             'max_test_acc': 0.0
         }
+        if msf_config is not None:
+            checkpoint['neuron_config'] = msf_config
+            checkpoint['experiment_args'] = vars(args).copy()
         torch.save(checkpoint, os.path.join(out_dir, 'checkpoint_0.pth'))
 
     if is_main_process:
@@ -1016,6 +1037,7 @@ def main():
             'dataset': args.dataset,
             'model': args.model,
             'neuron_model': args.neuron_model,
+            **({'neuron_config': msf_config} if msf_config is not None else {}),
             'seed': args.seed,
             'epochs_planned': args.epochs,
             'batch_size': args.b,
@@ -1319,6 +1341,9 @@ def main():
             'epoch': epoch,
             'max_test_acc': max_test_acc
         }
+        if msf_config is not None:
+            checkpoint['neuron_config'] = msf_config
+            checkpoint['experiment_args'] = vars(args).copy()
 
         if save_max and (not use_ddp or dist.get_rank() == 0):
             torch.save(checkpoint, os.path.join(out_dir, 'checkpoint_max.pth'))

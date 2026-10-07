@@ -2,6 +2,8 @@
 # 说明：
 # 1) 每个数据集都按 CIFAR-10 的详细格式展开：每个神经元单独给出说明与可复制命令。
 # 2) 每条命令都显式写出该神经元“特有参数”，且初始值与 train.py 默认值一致。
+# MSF/LSMSF 不支持 ASN、成功调制、突触释放及多时间步接口；启用会明确报错。
+# MSF/LSMSF 的现有 spike_rate 字段表示平均脉冲数，可超过 1，不是发放概率；详见 docs/MSF_LSMSF.md。
 # 3) 可直接复制运行；后续调参只改对应参数即可。
 # 4) 如需启用 ASN，可在任意 4D 卷积神经元实验命令后追加：
 #      -asn_enable -asn_p 0.5 -asn_rho 0.5 -asn_seed 2022
@@ -53,6 +55,13 @@
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIF
+# MSF（固定多阈值，输出 0～D；发放后主膜 hard reset 到 0）
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model MSF \
+  -msf_D 4 -msf_threshold 1.0 -msf_decay 0.25 -msf_alpha 0.5
+# LSMSF（相同 MSF 动力学 + 标准非重置 LS 历史膜；历史权重和幂默认固定）
+python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSMSF \
+  -msf_D 4 -msf_threshold 1.0 -msf_decay 0.25 -msf_alpha 0.5 \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_mode all
 # GLIF（三门控 LIF；显式列出本仓库默认初值，alpha=1-1/tau=0.5，beta/gamma 以 0.999 近似 1）
 python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model GLIF \
   -tau 2.0 -glif_alpha 0.5 -glif_beta 0.999 -glif_gamma 0.999
@@ -175,6 +184,13 @@ python train.py -data_dir ./data_dir -dataset cifar10 -model spiking_resnet18 -T
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LIF
+# MSF（固定多阈值，输出 0～D；发放后主膜 hard reset 到 0）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model MSF \
+  -msf_D 4 -msf_threshold 1.0 -msf_decay 0.25 -msf_alpha 0.5
+# LSMSF（相同 MSF 动力学 + 标准非重置 LS 历史膜；历史权重和幂默认固定）
+python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model LSMSF \
+  -msf_D 4 -msf_threshold 1.0 -msf_decay 0.25 -msf_alpha 0.5 \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_mode all
 # GLIF（三门控 LIF；显式列出本仓库默认初值）
 python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -T_max 200 -epochs 200 -weight_decay 5e-5 -neuron_model GLIF \
   -tau 2.0 -glif_alpha 0.5 -glif_beta 0.999 -glif_gamma 0.999
@@ -297,6 +313,13 @@ python train.py -data_dir ./data_dir -dataset cifar100 -model spiking_resnet18 -
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LIF
+# MSF（固定多阈值，输出 0～D；发放后主膜 hard reset 到 0）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model MSF \
+  -msf_D 4 -msf_threshold 1.0 -msf_decay 0.25 -msf_alpha 0.5
+# LSMSF（相同 MSF 动力学 + 标准非重置 LS 历史膜；历史权重和幂默认固定）
+python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model LSMSF \
+  -msf_D 4 -msf_threshold 1.0 -msf_decay 0.25 -msf_alpha 0.5 \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_mode all
 # GLIF（三门控 LIF；显式列出本仓库默认初值）
 python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13_bn -neuron_model GLIF \
   -tau 2.0 -glif_alpha 0.5 -glif_beta 0.999 -glif_gamma 0.999
@@ -422,6 +445,13 @@ python train.py -data_dir ./data_dir -dataset tiny_imagenet -model spiking_vgg13
 
 # LIF（vanilla，无额外特有参数；VGG 基线）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LIF
+# MSF（固定多阈值，输出 0～D；发放后主膜 hard reset 到 0）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model MSF \
+  -msf_D 4 -msf_threshold 1.0 -msf_decay 0.25 -msf_alpha 0.5
+# LSMSF（相同 MSF 动力学 + 标准非重置 LS 历史膜；历史权重和幂默认固定）
+python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model LSMSF \
+  -msf_D 4 -msf_threshold 1.0 -msf_decay 0.25 -msf_alpha 0.5 \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_mode all
 # GLIF（三门控 LIF；沿用本仓库 DVS-CIFAR10 基础训练设置）
 python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -model spiking_vgg11_bn -lr 0.05 -mse_n_reg -neuron_model GLIF \
   -tau 2.0 -glif_alpha 0.5 -glif_beta 0.999 -glif_gamma 0.999
@@ -563,6 +593,13 @@ python train.py -data_dir ./data_dir -dataset DVSCIFAR10 -T 10 -drop_rate 0.3 -m
 
 # LIF（vanilla，无额外特有参数）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LIF
+# MSF（固定多阈值，输出 0～D；发放后主膜 hard reset 到 0）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model MSF \
+  -msf_D 4 -msf_threshold 1.0 -msf_decay 0.25 -msf_alpha 0.5
+# LSMSF（相同 MSF 动力学 + 标准非重置 LS 历史膜；历史权重和幂默认固定）
+python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model LSMSF \
+  -msf_D 4 -msf_threshold 1.0 -msf_decay 0.25 -msf_alpha 0.5 \
+  -history_weight 1.0 -history_power 1.0 -history_eps 1e-6 -history_mode all
 # GLIF（三门控 LIF；沿用本仓库 DVS-Gesture 基础训练设置）
 python train.py -data_dir ./data_dir -dataset dvsgesture -model spiking_vgg11_bn -T 20 -b 16 -drop_rate 0.4 -neuron_model GLIF \
   -tau 2.0 -glif_alpha 0.5 -glif_beta 0.999 -glif_gamma 0.999
