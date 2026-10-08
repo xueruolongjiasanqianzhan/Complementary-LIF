@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate a trained LSLIF checkpoint under history-branch interventions.
+"""Evaluate a trained LSLIF/LSCLIF checkpoint under history interventions.
 
 This first-stage experiment does not train or modify checkpoint weights. It
 compares normal inference with zeroed, batch-shuffled, and time-shifted history
@@ -24,7 +24,7 @@ for path in (REPO_ROOT, ANALYSIS_DIR):
         sys.path.insert(0, str(path))
 
 from models import spiking_vgg_bn  # noqa: E402
-from modules.neuron import LSLIFNeuron  # noqa: E402
+from modules.neuron import LSCLIFNeuron, LSLIFNeuron  # noqa: E402
 from prefix_mask_multi_neuron_suffix_similarity import (  # noqa: E402
     sync_history_flags_from_checkpoint,
 )
@@ -129,7 +129,58 @@ class InterventionLSLIFNeuron(LSLIFNeuron):
         return spike.to(dtype=x.dtype)
 
 
-def build_intervention_vgg11(args_ns, device: torch.device) -> torch.nn.Module:
+class InterventionLSCLIFNeuron(LSCLIFNeuron):
+    """Analysis-only LSCLIF that intervenes before history fusion."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self._ensure_state(x)
+        x_f = x.to(torch.float32)
+        tau_eff = torch.as_tensor(self.tau, device=self.v.device, dtype=self.v.dtype)
+        if self.decay_input:
+            v_t = self.v + (x_f - self.v) / (tau_eff + self.tau_eps)
+            n_t = self.n + (x_f - self.n) / (tau_eff + self.tau_eps)
+        else:
+            decay = torch.clamp(1.0 - 1.0 / (tau_eff + self.tau_eps), 0.0, 1.0)
+            v_t = self.v * decay + x_f
+            n_t = self.n * decay + x_f
+
+        self.step_count += 1
+        step_t = torch.as_tensor(float(self.step_count), device=v_t.device, dtype=v_t.dtype)
+        history_power = self._get_history_power(dtype=v_t.dtype, device=v_t.device)
+        norm = torch.pow(step_t + self.history_eps, history_power)
+        history_weight = self._get_history_weight(dtype=v_t.dtype, device=v_t.device,
+                                                  step_count=self.step_count)
+        history_term = history_weight * (n_t / norm)
+        if self.history_mode == 'post_spike':
+            history_term = history_term * self.has_fired.to(dtype=history_term.dtype)
+        total_mem = v_t + self._intervene_history_term(history_term)
+
+        self.m = self.m * torch.sigmoid(v_t / (tau_eff + self.tau_eps))
+        th_f = torch.as_tensor(self.v_threshold, device=self.v.device, dtype=self.v.dtype)
+        spike = self._success_fire(total_mem, th_f)
+        self.m = self.m + spike
+
+        rs = spike.detach() if self.detach_reset else spike
+        if self.v_reset is None:
+            self.v = v_t - rs * th_f
+        else:
+            v_reset_t = torch.as_tensor(self.v_reset, device=self.v.device, dtype=self.v.dtype)
+            self.v = torch.where(rs.bool(), v_reset_t, v_t)
+        self.v = self.v - rs * torch.sigmoid(self.m)
+        self.n = n_t
+        self.has_fired = torch.logical_or(self.has_fired, rs.bool())
+        self._cache_success_spike(spike)
+        return spike.to(dtype=x.dtype)
+
+
+INTERVENTION_NEURONS = {
+    'LSLIF': InterventionLSLIFNeuron,
+    'LSCLIF': InterventionLSCLIFNeuron,
+}
+
+
+def build_intervention_vgg11(args_ns, device: torch.device,
+                             neuron_model: str = 'LSLIF') -> torch.nn.Module:
     """Build the analysis model without changing production model factories."""
     if args_ns.model != 'spiking_vgg11_bn':
         raise NotImplementedError(f'Expected spiking_vgg11_bn, got {args_ns.model}')
@@ -153,8 +204,10 @@ def build_intervention_vgg11(args_ns, device: torch.device) -> torch.nn.Module:
         asn_seed=getattr(args_ns, 'asn_seed', 2022),
         asn_detach_lateral=getattr(args_ns, 'asn_detach_lateral', False),
     )
+    if neuron_model not in INTERVENTION_NEURONS:
+        raise NotImplementedError(f'Unsupported intervention neuron: {neuron_model}')
     return spiking_vgg_bn.spiking_vgg11_bn(
-        neuron=InterventionLSLIFNeuron,
+        neuron=INTERVENTION_NEURONS[neuron_model],
         num_classes=10,
         neuron_dropout=getattr(args_ns, 'drop_rate', 0.0),
         c_in=2,
@@ -180,11 +233,11 @@ def parse_condition(text: str):
 def configure_intervention(model: torch.nn.Module, mode: str, shift: int) -> int:
     count = 0
     for module in model.modules():
-        if isinstance(module, InterventionLSLIFNeuron):
+        if isinstance(module, tuple(INTERVENTION_NEURONS.values())):
             module.set_history_intervention(mode, shift)
             count += 1
     if count == 0:
-        raise ValueError('No standard LSLIFNeuron layers were found in the model')
+        raise ValueError('No supported LSLIF/LSCLIF layers were found in the model')
     return count
 
 
@@ -229,7 +282,7 @@ def update_stats(stats: dict, current: dict, normal: dict):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description='History-branch intervention evaluation for a trained DVS-CIFAR10 LSLIF VGG11.'
+        description='History-branch intervention evaluation for a trained DVS-CIFAR10 LSLIF/LSCLIF VGG11.'
     )
     parser.add_argument('--checkpoint', required=True)
     parser.add_argument('--args', required=True, dest='args_path')
@@ -240,6 +293,12 @@ def build_parser():
     parser.add_argument('--workers', type=int, default=0)
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
     parser.add_argument('--seed', type=int, default=2022)
+    parser.add_argument(
+        '--neuron-model',
+        choices=sorted(INTERVENTION_NEURONS),
+        default=None,
+        help='Checkpoint neuron type. By default it is read from args.txt.',
+    )
     parser.add_argument(
         '--conditions', nargs='+',
         default=['normal', 'zero', 'shuffle', 'time_shift_1', 'time_shift_2', 'time_shift_4'],
@@ -280,10 +339,16 @@ def main(argv=None):
 
     checkpoint, state_dict = get_checkpoint_state(checkpoint_path, device)
     train_args = load_namespace_args(args_path)
+    neuron_model = cli.neuron_model or getattr(train_args, 'neuron_model', 'LSLIF')
+    if neuron_model not in INTERVENTION_NEURONS:
+        raise ValueError(
+            f'Expected an LSLIF or LSCLIF checkpoint, got neuron_model={neuron_model!r}. '
+            'Pass --neuron-model if args.txt does not contain the training neuron type.'
+        )
     train_args.T = cli.T
     train_args.b = cli.batch_size
-    train_args = sync_history_flags_from_checkpoint(train_args, state_dict, 'LSLIF')
-    model = build_intervention_vgg11(train_args, device)
+    train_args = sync_history_flags_from_checkpoint(train_args, state_dict, neuron_model)
+    model = build_intervention_vgg11(train_args, device, neuron_model)
     load_checkpoint(model, state_dict)
     model.eval()
     loader = build_test_loader(cli.data_dir, cli.T, cli.batch_size, cli.workers)
@@ -334,7 +399,7 @@ def main(argv=None):
         'analysis': 'history_branch_intervention_eval',
         'dataset': 'DVSCIFAR10',
         'model': 'spiking_vgg11_bn',
-        'neuron_model': 'LSLIF',
+        'neuron_model': neuron_model,
         'checkpoint': str(checkpoint_path),
         'args': str(args_path),
         'checkpoint_epoch': checkpoint.get('epoch') if isinstance(checkpoint, dict) else None,

@@ -1,21 +1,23 @@
-# LSLIF history-branch intervention experiment
+# LSLIF/LSCLIF history-branch intervention experiment
 
 This is the first, checkpoint-only experiment from the LS experiment roadmap.
-It reuses a trained DVS-CIFAR10/VGG11 LSLIF checkpoint and the original test
+It reuses a trained DVS-CIFAR10/VGG11 LSLIF or LSCLIF checkpoint and the original test
 set; it does not retrain or change checkpoint weights.
 
 ## Conditions
 
-- `normal`: unchanged LSLIF inference;
+- `normal`: unchanged LSLIF/LSCLIF inference;
 - `zero`: replace the fused history term with zero;
 - `shuffle`: roll history terms across batch samples, preserving their values
   while breaking sample correspondence;
 - `time_shift_N`: use the history term from N steps earlier and emit zero for
   the first N steps.
 
-The script currently targets the standard `LSLIFNeuron`. Other LS variants use
-different forward equations and are intentionally excluded from this first
-implementation rather than silently applying an incomplete intervention.
+The script supports `LSLIFNeuron` and `LSCLIFNeuron`, preserving LSCLIF's
+complementary-memory formation and reset while intervening only on its LS
+history term. It normally reads `neuron_model` from `args.txt`; use
+`--neuron-model LSCLIF` to override missing or legacy metadata. Training
+`args.txt` files with appended logs from all 300 epochs are supported.
 
 ## Command
 
@@ -25,6 +27,7 @@ python analysis/history_branch_intervention_eval.py \
   --args /path/to/lslif/args.txt \
   --data-dir /path/to/DVS-CIFAR10 \
   --out-dir analysis_results/history_branch_intervention \
+  --neuron-model LSCLIF \
   --T 16 \
   --batch-size 16 \
   --conditions normal zero shuffle time_shift_1 time_shift_2 time_shift_4
