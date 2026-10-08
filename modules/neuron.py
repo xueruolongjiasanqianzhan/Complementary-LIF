@@ -1,4 +1,8 @@
 from typing import Callable, List, Optional
+import math
+import hashlib
+import json
+import numbers
 
 import numpy as np
 import torch
@@ -664,6 +668,157 @@ class LSLIFNeuron(ASNFireMixin, nn.Module):
         self.has_fired = torch.logical_or(self.has_fired, rs.bool())
         self._cache_success_spike(spike)
         return spike.to(dtype=x.dtype)
+
+
+def _validate_msf_options(msf_D, msf_threshold, msf_decay, msf_alpha, kwargs):
+    if isinstance(msf_D, bool) or not isinstance(msf_D, numbers.Integral) or msf_D < 1:
+        raise ValueError('msf_D must be a positive integer.')
+    if not math.isfinite(msf_threshold) or msf_threshold <= 0:
+        raise ValueError('msf_threshold must be finite and positive.')
+    if not math.isfinite(msf_decay) or not 0 <= msf_decay <= 1:
+        raise ValueError('msf_decay must be finite and in [0, 1].')
+    if not math.isfinite(msf_alpha) or msf_alpha <= 0:
+        raise ValueError('msf_alpha must be finite and positive.')
+    for name in ('asn_enable', 'success_modulation_enable', 'synaptic_release_enable',
+                 'rplif_lif_head', 'multiple_step'):
+        if kwargs.get(name, False):
+            raise ValueError(f'{name} is not supported with pure MSF/LSMSF.')
+
+
+class MSFRectangular(torch.autograd.Function):
+    """Official MSF >= firing and strict rectangular windows, generalized to D thresholds."""
+
+    @staticmethod
+    def forward(ctx, membrane, thresholds, alpha):
+        ctx.save_for_backward(membrane, thresholds)
+        ctx.alpha = alpha
+        # Accumulate without allocating D copies of the activation map.
+        output = torch.zeros_like(membrane)
+        for threshold in thresholds:
+            output = output + (membrane >= threshold).to(membrane.dtype)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        membrane, thresholds = ctx.saved_tensors
+        gradient = torch.zeros_like(membrane)
+        for threshold in thresholds:
+            gradient = gradient + ((membrane - threshold).abs() < ctx.alpha).to(membrane.dtype)
+        return grad_output * gradient / (2 * ctx.alpha), None, None
+
+
+class MSFNeuron(nn.Module):
+    """Single-step multi-synaptic neuron with fixed thresholds and boolean hard reset.
+
+    Aligned with Multisynaptic-spiking-neurons/CIFAR10-DVS/MHSANet.py.
+    Generic backbone tau, v_threshold and surrogate_function do not affect MSF.
+    """
+
+    def __init__(self, msf_D=4, msf_threshold=1.0, msf_decay=0.25,
+                 msf_alpha=0.5, **kwargs):
+        super().__init__()
+        _validate_msf_options(msf_D, msf_threshold, msf_decay, msf_alpha, kwargs)
+        self.msf_D = int(msf_D)
+        self.msf_threshold = float(msf_threshold)
+        self.msf_decay = float(msf_decay)
+        self.msf_alpha = float(msf_alpha)
+        self.register_buffer('thresholds', self.msf_threshold + torch.arange(self.msf_D, dtype=torch.float32))
+        self.v = None
+
+    def reset(self):
+        self.v = None
+
+    def _ensure_state(self, x):
+        if not x.is_floating_point():
+            raise TypeError('MSF/LSMSF requires floating-point input.')
+        if self.v is None or self.v.shape != x.shape or self.v.device != x.device:
+            self.v = torch.zeros_like(x, dtype=torch.float32)
+
+    def _msf_fire(self, membrane):
+        return MSFRectangular.apply(
+            membrane, self.thresholds.to(device=membrane.device, dtype=membrane.dtype), self.msf_alpha)
+
+    def forward(self, x):
+        self._ensure_state(x)
+        main_mem = self.msf_decay * self.v + x.float()
+        spike = self._msf_fire(main_mem)
+        self.v = torch.where(spike > 0, torch.zeros_like(main_mem), main_mem)
+        return spike.to(x.dtype)
+
+
+class LSMSFNeuron(LSLIFNeuron):
+    """MSF with standard LSLIF's non-reset history, shared across all thresholds."""
+
+    def __init__(self, *args, msf_D=4, msf_threshold=1.0, msf_decay=0.25,
+                 msf_alpha=0.5, **kwargs):
+        _validate_msf_options(msf_D, msf_threshold, msf_decay, msf_alpha, kwargs)
+        super().__init__(*args, **kwargs)
+        if not math.isfinite(self.history_eps) or self.history_eps <= 0:
+            raise ValueError('history_eps must be finite and positive.')
+        if not math.isfinite(self.history_weight) or not math.isfinite(self.history_power):
+            raise ValueError('history_weight and history_power must be finite.')
+        self.msf_D = int(msf_D)
+        self.msf_threshold = float(msf_threshold)
+        self.msf_decay = float(msf_decay)
+        self.msf_alpha = float(msf_alpha)
+        self.register_buffer('thresholds', self.msf_threshold + torch.arange(self.msf_D, dtype=torch.float32))
+
+    def reset(self):
+        super().reset()
+        if hasattr(self, 'last_v_pre'):
+            self.last_v_pre = None
+
+    def forward(self, x):
+        if not x.is_floating_point():
+            raise TypeError('MSF/LSMSF requires floating-point input.')
+        self._ensure_state(x)
+        main_mem = self.msf_decay * self.v + x.float()
+        history_mem = self.msf_decay * self.n + x.float()
+        self.step_count += 1
+        power = self._get_history_power(main_mem.dtype, main_mem.device)
+        weight = self._get_history_weight(main_mem.dtype, main_mem.device, self.step_count)
+        step = torch.as_tensor(self.step_count, dtype=main_mem.dtype, device=main_mem.device)
+        history_term = weight * history_mem / (step + self.history_eps).pow(power)
+        if self.history_mode == 'post_spike':
+            history_term = history_term * self.has_fired.to(main_mem.dtype)
+        history_term = self._intervene_history_term(history_term)
+        total_mem = main_mem + history_term
+        if getattr(self, 'gradient_probe_enabled', False):
+            self.last_v_pre = total_mem
+        spike = MSFRectangular.apply(
+            total_mem, self.thresholds.to(device=total_mem.device, dtype=total_mem.dtype), self.msf_alpha)
+        fired = spike > 0  # A nondifferentiable boolean mask, regardless of spike count.
+        self.v = torch.where(fired, torch.zeros_like(main_mem), main_mem)
+        self.n = history_mem
+        self.has_fired = torch.logical_or(self.has_fired, fired)
+        return spike.to(x.dtype)
+
+
+def msf_experiment_config(args):
+    """Effective, JSON-serializable reconstruction settings for MSF experiments."""
+    if args.neuron_model not in ('MSF', 'LSMSF'):
+        return None
+    options = vars(args)
+    config = {key: options[key] for key in ('msf_D', 'msf_threshold', 'msf_decay', 'msf_alpha')}
+    _validate_msf_options(**config, kwargs=options)
+    if args.neuron_model == 'LSMSF':
+        for key in ('history_weight', 'history_power', 'history_eps', 'history_mode',
+                    'history_learn_weight', 'history_weight_lo', 'history_weight_hi',
+                    'history_weight_per_step', 'history_learn_power'):
+            config[key] = options[key]
+        config['history_max_steps'] = args.T
+    return {'neuron_model': args.neuron_model, 'kwargs': config}
+
+
+def msf_run_tag(config):
+    """Compact settings tag; hash distinguishes all LS settings without long filenames."""
+    settings = config['kwargs']
+    tag = (f"D{settings['msf_D']}_th{settings['msf_threshold']}"
+           f"_decay{settings['msf_decay']}_alpha{settings['msf_alpha']}")
+    if config['neuron_model'] == 'LSMSF':
+        tag += f"_hw{settings['history_weight']}_hp{settings['history_power']}_hm{settings['history_mode']}"
+    digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:10]
+    return f'{tag}_{digest}'
 
 
 class GLIFNeuron(ASNFireMixin, nn.Module):
