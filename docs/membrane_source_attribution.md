@@ -36,15 +36,27 @@ The default deterministic input is:
 It creates natural charge/reset events followed by silent observation. A
 custom sequence can be supplied with `--inputs`.
 
-The two source-time heatmaps use a shared power-law color scale with
-`--heatmap-gamma 0.35` by default. This expands color differences among small
-late-time contributions without changing their numerical percentages or the
-shared LIF/LSLIF scale. Use a smaller positive value (for example `0.2`) for
-more low-value contrast, or `1.0` for the original linear color mapping:
+The two source-time heatmaps plot the absolute value of each signed source
+percentage, while the CSV retains the original sign. They use a shared,
+reversed palette and mirrored power-law scale with `--heatmap-gamma 0.35` by
+default: larger magnitudes are darker and smaller magnitudes are lighter. The
+nonuniform part of the scale is mirrored along with the color meaning, giving
+more color resolution to the high-value, dark end instead of retaining the old
+low-value emphasis. This does not change the numerical magnitudes or the shared
+LIF/LSLIF scale. Use a smaller positive value (for example `0.2`) for stronger
+high-value expansion, or `1.0` for a linear color mapping:
 
 ```bash
 python analysis/analyze_membrane_sources.py --heatmap-gamma 0.2
 ```
+
+The script also writes log-normalized heatmap candidates spanning 2, 3, 4, and
+5 decades below the shared maximum. On these plots, each factor-of-ten interval
+receives equal color distance, so `0.1` versus `0.01` is as visible as `0.01`
+versus `0.001`. All candidates use `viridis_r`; one additional 4-decade
+`magma_r` candidate isolates the effect of changing the palette. Configure them
+with `--heatmap-log-decades`, `--heatmap-log-cmap`, and
+`--heatmap-log-alternate-cmap`.
 
 ## Outputs
 

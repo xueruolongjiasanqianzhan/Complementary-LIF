@@ -116,6 +116,13 @@ class PreActResNet(nn.Module):
         super(PreActResNet, self).__init__()
         self.num_blocks = num_blocks
 
+        rplif_lif_head = bool(kwargs.pop('rplif_lif_head', False))
+        rplif_lif_head_neuron = kwargs.pop('rplif_lif_head_neuron', None)
+        if rplif_lif_head and getattr(neuron, '__name__', '') not in {'RPLIFNeuron', 'LSRPLIFNeuron'}:
+            raise ValueError('rplif_lif_head can only be used with RPLIFNeuron or LSRPLIFNeuron.')
+        if rplif_lif_head and rplif_lif_head_neuron is None:
+            raise ValueError('rplif_lif_head_neuron is required when rplif_lif_head is enabled.')
+
         neurons_per_block = 2 if block is PreActBlock else 3
         total_neuron_layers = sum(num_blocks) * neurons_per_block + 1
         kwargs = dict(kwargs)
@@ -135,7 +142,8 @@ class PreActResNet(nn.Module):
         self.drop = layer.Dropout(dropout)
         self.linear = nn.Linear(512 * block.expansion, num_classes)
 
-        self.relu1 = _build_neuron(neuron, kwargs, zelif_kernel_size=1)
+        final_neuron = rplif_lif_head_neuron if rplif_lif_head else neuron
+        self.relu1 = _build_neuron(final_neuron, kwargs, zelif_kernel_size=1)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):

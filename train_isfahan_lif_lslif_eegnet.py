@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""跨被试 EEG patient-fold 数据上的 chunk-based Spiking EEGNet：LIF vs LSLIF。
+"""Isfahan EEG segment 数据上的 chunk-based Spiking EEGNet：LIF vs LSLIF。
 
-输入 ``[B, 1, 61, 750]`` 沿采样轴切成 30 个互不重叠的 25 点 chunk。每个
+输入 ``[B, 1, 19, 512]`` 沿采样轴切成 20 个完整的 25 点 chunk 和最后一个
+不足 25 点的 chunk（自动补零），共 21 个 SNN 时间步。每个
 chunk 直接作为一个 SNN 时间步输入共享权重的 EEGNet，不做脉冲编码，也不在
 chunk 之间维护卷积缓存。LIF/LSLIF 状态在同一样本的 chunk 之间保留；所有时间
 步的脉冲特征先求平均，最后由普通 ``nn.Linear`` 分类。
@@ -29,9 +30,9 @@ from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader, Dataset
 
 
-DEFAULT_TRAIN_DIR = "/home/guyue/zhao/PythonProject/dataset/Self-data/kFold/kFold(61x750)/10fold-patient-data/train2/"
-DEFAULT_TEST_DIR = "/home/guyue/zhao/PythonProject/dataset/Self-data/kFold/kFold(61x750)/10fold-patient-data/test2/"
-DEFAULT_OUTPUT_DIR = "all_result/spiking_eegnet/patient_lif_vs_lslif/"
+DEFAULT_TRAIN_DIR = "/home/guyue/zhao/PythonProject/dataset/Isfahan-data/kFold/0.5-50/2s/new-segment/train/"
+DEFAULT_TEST_DIR = "/home/guyue/zhao/PythonProject/dataset/Isfahan-data/kFold/0.5-50/2s/new-segment/test/"
+DEFAULT_OUTPUT_DIR = "all_result/spiking_eegnet/isfahan_lif_vs_lslif/"
 
 
 class RectangleSpike(torch.autograd.Function):
@@ -191,7 +192,7 @@ class EEGSegmentDataset(Dataset):
 class SpikingEEGNet(nn.Module):
     """Chunk-based EEGNet-like SNN，支持 tiny 和 full 两种容量。"""
 
-    def __init__(self, neuron_type, channels=61, num_classes=2, chunk_size=25,
+    def __init__(self, neuron_type, channels=19, num_classes=2, chunk_size=25,
                  architecture="full", f1=4, depth_multiplier=1, f2=16,
                  temporal_kernel=15, separable_kernel=7, dropout=0.25,
                  **neuron_kwargs):
@@ -391,19 +392,19 @@ def train_one_fold(args, fold_idx, neuron_type, train_path, test_path, device) -
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Chunk-based Spiking EEGNet LIF vs LSLIF experiment")
+    parser = argparse.ArgumentParser(description="Isfahan chunk-based Spiking EEGNet LIF vs LSLIF experiment")
     parser.add_argument("--train-dir", default=DEFAULT_TRAIN_DIR)
     parser.add_argument("--test-dir", default=DEFAULT_TEST_DIR)
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--folds", type=int, default=10)
     parser.add_argument("--neurons", nargs="+", default=["LIF", "LSLIF"], choices=["LIF", "LSLIF"])
-    parser.add_argument("--batch-size", type=int, default=124)
+    parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-3)
     parser.add_argument("--step-size", type=int, default=50)
     parser.add_argument("--gamma", type=float, default=0.9)
-    parser.add_argument("--channels", type=int, default=61)
+    parser.add_argument("--channels", type=int, default=19)
     parser.add_argument("--num-classes", type=int, default=2)
     parser.add_argument("--chunk-size", type=int, default=25)
     parser.add_argument("--architecture", default="full", choices=["tiny", "full"],

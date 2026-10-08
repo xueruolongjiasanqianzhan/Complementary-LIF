@@ -336,6 +336,12 @@ class SpikingVGGBN(nn.Module):
         self.current_hw = kwargs.get('fc_hw', None)
         self.total_neuron_layers = sum(1 for stage in cfg[vgg_name] for v in stage if v != 'M')
         self.layer_index = 0
+        self.rplif_lif_head = bool(kwargs.pop('rplif_lif_head', False))
+        self.rplif_lif_head_neuron = kwargs.pop('rplif_lif_head_neuron', None)
+        if self.rplif_lif_head and getattr(neuron, '__name__', '') not in {'RPLIFNeuron', 'LSRPLIFNeuron'}:
+            raise ValueError('rplif_lif_head can only be used with RPLIFNeuron or LSRPLIFNeuron.')
+        if self.rplif_lif_head and self.rplif_lif_head_neuron is None:
+            raise ValueError('rplif_lif_head_neuron is required when rplif_lif_head is enabled.')
 
         self.layer1 = self._make_layers(cfg[vgg_name][0], dropout, neuron, **kwargs)
         self.layer2 = self._make_layers(cfg[vgg_name][1], dropout, neuron, **kwargs)
@@ -378,6 +384,8 @@ class SpikingVGGBN(nn.Module):
                 tail_lif_layers = int(neuron_kwargs.pop('srlif_tail_lif_layers', 0) or 0)
                 tail_neuron = neuron_kwargs.pop('srlif_tail_neuron', None)
                 selected_neuron = neuron
+                if self.rplif_lif_head and self.layer_index == self.total_neuron_layers - 1:
+                    selected_neuron = self.rplif_lif_head_neuron
                 if (getattr(neuron, '__name__', '') == 'SRLIFNeuron'
                         and tail_neuron is not None
                         and tail_lif_layers > 0

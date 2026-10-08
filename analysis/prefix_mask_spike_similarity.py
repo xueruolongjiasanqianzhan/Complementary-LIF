@@ -152,6 +152,12 @@ def load_namespace_args(args_path: Path) -> SimpleNamespace:
     if not args_path.is_file():
         raise FileNotFoundError(f'args file does not exist: {args_path}')
     raw = args_path.read_text(encoding='utf-8').strip()
+    # train.py appends one block of epoch metrics to args.txt after every epoch.
+    # The serialized Namespace always occupies the first line, so ignore the
+    # potentially hundreds of following log lines when reconstructing options.
+    first_line = raw.splitlines()[0].strip() if raw else ''
+    if first_line.startswith('Namespace(') and first_line.endswith(')'):
+        raw = first_line
     if raw.startswith('Namespace(') and raw.endswith(')'):
         raw = raw[len('Namespace('):-1]
     values = dict(DEFAULTS)
