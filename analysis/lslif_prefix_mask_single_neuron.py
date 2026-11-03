@@ -6,12 +6,18 @@ an LSLIF neuron, masks the input prefix, and visualizes how much the later
 membrane trajectory and spike train change.  The script writes an SVG figure with
 input curves, membrane curves, and spike rasters, using only Python's standard
 library so it can run in minimal environments.
+
+Optional paper exports require matplotlib (not installed automatically):
+    python analysis/lslif_prefix_mask_single_neuron.py --paper --time-steps 40 --mask-steps 20
+The original defaults remain unchanged. Paper plots show discrete samples only.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import json
+from datetime import datetime
 import math
 import random
 from pathlib import Path
@@ -116,7 +122,7 @@ def write_svg(x: list[float], masked_x: list[float], mask_steps: int, traces: di
     xmax = len(x) - 1
     mask_x = left + plot_w * (mask_steps - 0.5) / max(xmax, 1)
     parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">', '<rect width="100%" height="100%" fill="white"/>']
-    parts.append(svg_text(width / 2, 35, "Prefix masking exposes stronger history dependence in LSLIF", 20, "middle"))
+    parts.append(svg_text(width / 2, 35, "Responses to prefix-masked input", 20, "middle"))
 
     panels = [
         ("Input current", [(x, "original", "#111111", ""), (masked_x, "prefix masked", "#777777", "5,4")]),
@@ -172,6 +178,124 @@ def write_csv(x: list[float], masked_x: list[float], traces: dict[str, dict[str,
             writer.writerow([i, x[i], masked_x[i], traces["LIF"]["original"]["decision_mem"][i], traces["LIF"]["masked"]["decision_mem"][i], traces["LIF"]["original"]["spikes"][i], traces["LIF"]["masked"]["spikes"][i], traces["LSLIF"]["original"]["decision_mem"][i], traces["LSLIF"]["masked"]["decision_mem"][i], traces["LSLIF"]["original"]["spikes"][i], traces["LSLIF"]["masked"]["spikes"][i]])
 
 
+def write_paper_outputs(x, masked_x, mask_steps, traces, args, out_dir):
+    """Export raw state differences and a discrete-time, unsmoothed figure.
+
+    The no-reset integrator is a mechanistic reference, not a trained baseline.
+    Vertical segments mark the actual pre/post reset difference at the same step.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    decay = 1.0 - 1.0 / args.tau
+    reference = []
+    for inputs in (x, masked_x):
+        state = 0.0
+        values = []
+        for current in inputs:
+            state = decay * state + current
+            values.append(state)
+        reference.append(values)
+    full, masked = traces["LIF"]["original"], traces["LIF"]["masked"]
+    rows = []
+    for t in range(len(x)):
+        pre = full["decision_mem"][t] - masked["decision_mem"][t]
+        post = full["post_reset_mem"][t] - masked["post_reset_mem"][t]
+        row = dict(step=t + 1, input=x[t], masked_input=masked_x[t],
+                   lif_pre_full=full["decision_mem"][t], lif_pre_masked=masked["decision_mem"][t],
+                   lif_post_full=full["post_reset_mem"][t], lif_post_masked=masked["post_reset_mem"][t],
+                   spike_full=full["spikes"][t], spike_masked=masked["spikes"][t],
+                   no_reset_full=reference[0][t], no_reset_masked=reference[1][t],
+                   delta_pre=pre, delta_post=post, delta_no_reset=reference[0][t]-reference[1][t],
+                   reset_abs_change=abs(post)-abs(pre))
+        # Exact soft-reset identity: post difference = pre difference - theta * spike difference.
+        assert math.isclose(post, pre - args.threshold * (row["spike_full"]-row["spike_masked"]), abs_tol=1e-12)
+        # LSLIF's decision voltage includes history; its reset acts on primary_mem.
+        for model, conditions in traces.items():
+            for state_name in conditions["original"]:
+                original = conditions["original"][state_name][t]
+                masked_value = conditions["masked"][state_name][t]
+                prefix = model.lower() + "_" + state_name
+                row[prefix + "_full"] = original
+                row[prefix + "_masked"] = masked_value
+                row[prefix + "_delta"] = original - masked_value
+        rows.append(row)
+    with (out_dir / "reset_state_traces.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    suffix = rows[mask_steps:]
+    events = [r for r in suffix if r["spike_full"] or r["spike_masked"]]
+    summary = dict(suffix_spike_change_rate=suffix_change_rate(full["spikes"], masked["spikes"], mask_steps),
+                   suffix_reset_events=len(events),
+                   reset_contractions=sum(r["reset_abs_change"] < -1e-12 for r in events),
+                   reset_expansions=sum(r["reset_abs_change"] > 1e-12 for r in events),
+                   reset_unchanged=sum(abs(r["reset_abs_change"]) <= 1e-12 for r in events),
+                   reset_event_definition="A suffix time step where either paired LIF trajectory spikes; simultaneous spikes count once.",
+                   suffix_first_step=mask_steps + 1,
+                   absolute_tolerance=1e-12,
+                   delta_definition="full minus masked",
+                   note="Counts describe this sequence only; spike agreement is not proof of lost information or impaired accuracy.")
+    # Compare the same primary state across the LSLIF reset, excluding history.
+    lslif_events = [r for r in suffix if r["lslif_spikes_full"] or r["lslif_spikes_masked"]]
+    lslif_changes = [abs(r["lslif_post_reset_mem_delta"]) - abs(r["lslif_primary_mem_delta"])
+                    for r in lslif_events]
+    summary["lslif_primary_reset"] = dict(
+        suffix_reset_events=len(lslif_events),
+        reset_contractions=sum(v < -1e-12 for v in lslif_changes),
+        reset_expansions=sum(v > 1e-12 for v in lslif_changes),
+        reset_unchanged=sum(abs(v) <= 1e-12 for v in lslif_changes),
+        reset_event_definition="A suffix step where either LSLIF trajectory spikes; simultaneous spikes count once.")
+    config = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}
+    (out_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
+    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    style = {"font.family": "DejaVu Serif", "font.size": 9, "axes.spines.top": False,
+             "axes.spines.right": False, "pdf.fonttype": 42, "svg.fonttype": "none"}
+    with plt.rc_context(style):
+        fig, axes = plt.subplots(3, 1, figsize=(7.2, 6.1), sharex=True,
+                                 gridspec_kw={"height_ratios": [1, 1.5, 0.65]}, layout="constrained")
+        steps = list(range(1, len(x)+1))
+        blue, orange, green = "#0072B2", "#D55E00", "#009E73"
+        axes[0].plot(steps, x, color=blue, linestyle="none", marker="o", ms=4,
+                     mfc="none", label="Full input")
+        axes[0].plot(steps, masked_x, color=orange, linestyle="none", marker=".", ms=3,
+                     label="Prefix masked")
+        axes[0].set_ylabel("Input current")
+        axes[0].set_title("(a) Identical input after the masked prefix", loc="left", fontsize=10)
+        axes[0].legend(frameon=False, ncol=2, fontsize=8, loc="lower left", bbox_to_anchor=(0, 1.2))
+        axes[1].plot(steps, [r["delta_no_reset"] for r in rows], color=green,
+                     linestyle="none", marker="x", ms=3, label="No-reset integrator")
+        axes[1].plot(steps, [r["delta_pre"] for r in rows], linestyle="none", marker="o", ms=3,
+                     mfc="white", mec=blue, label="LIF before reset")
+        axes[1].plot(steps, [r["delta_post"] for r in rows], linestyle="none", marker=".", ms=5,
+                     color=orange, label="LIF after reset")
+        for i, row in enumerate(rows):
+            if row["spike_full"] or row["spike_masked"]:
+                axes[1].plot([i+1, i+1], [row["delta_pre"], row["delta_post"]], color=orange, lw=1.2)
+        axes[1].axhline(0, color="0.65", lw=0.6)
+        axes[1].set_ylabel("State difference\n(full − masked)")
+        axes[1].set_title("(b) State differences before and after soft reset", loc="left", fontsize=10)
+        axes[1].legend(frameon=False, fontsize=8, ncol=3, loc="lower left", bbox_to_anchor=(0, 1.15))
+        for y, key, color in [(1, "spike_full", blue), (0, "spike_masked", orange)]:
+            ts = [r["step"] for r in rows if r[key]]
+            axes[2].vlines(ts, y-0.23, y+0.23, color=color, lw=1.2)
+        axes[2].set_yticks([0, 1], ["Masked", "Full"])
+        axes[2].set_ylim(-0.5, 1.5)
+        axes[2].set_title("(c) LIF spike output", loc="left", fontsize=10)
+        axes[2].set_xlabel("Time step")
+        for ax in axes:
+            if mask_steps:
+                ax.axvspan(0.5, mask_steps+0.5, color="0.9", zorder=-5)
+                ax.axvline(mask_steps+0.5, color="0.5", lw=0.8, ls="--")
+            ax.set_xlim(0.5, len(x)+0.5)
+        fig.suptitle("State differences under prefix masking", fontsize=12)
+        for ext in ("pdf", "svg", "png"):
+            fig.savefig(out_dir / ("prefix_reset_mechanism."+ext), dpi=300)
+        plt.close(fig)
+    print(json.dumps(summary, indent=2))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Visualize LIF vs LSLIF response after masking early input time steps.")
     parser.add_argument("--time-steps", type=int, default=40)
@@ -183,12 +307,23 @@ def main() -> None:
     parser.add_argument("--history-power", type=float, default=1.0)
     parser.add_argument("--history-eps", type=float, default=1e-6)
     parser.add_argument("--out-dir", type=Path, default=Path("analysis_results/lslif_prefix_mask_single_neuron"))
+    parser.add_argument("--paper", action="store_true", help="Add mechanism figure (requires matplotlib), raw states and configuration.")
+    parser.add_argument("--input-scale", type=float, default=1.0, help="Scale the generated current without altering its timing.")
     args = parser.parse_args()
+    if args.time_steps < 2 or not math.isfinite(args.tau) or args.tau <= 1:
+        parser.error("time-steps must be >= 2 and tau must be finite and > 1")
+    if not math.isfinite(args.threshold) or args.threshold <= 0:
+        parser.error("threshold must be finite and > 0")
+    if not all(math.isfinite(v) for v in (args.input_scale, args.history_weight, args.history_power, args.history_eps)) or args.history_eps <= 0 or args.input_scale < 0:
+        parser.error("parameters must be finite; history-eps > 0 and input-scale >= 0")
+    if args.paper:
+        # Each paper run is isolated even when an existing output root is supplied.
+        args.out_dir = args.out_dir / ("paper_" + datetime.now().strftime("%Y%m%d_%H%M%S_%f"))
 
     if not 0 <= args.mask_steps < args.time_steps:
         raise ValueError("--mask-steps must satisfy 0 <= mask_steps < time_steps")
 
-    x = build_input(args.time_steps, args.seed)
+    x = [args.input_scale * v for v in build_input(args.time_steps, args.seed)]
     masked_x = list(x)
     for idx in range(args.mask_steps):
         masked_x[idx] = 0.0
@@ -198,11 +333,14 @@ def main() -> None:
         "LSLIF": {"original": simulate_lslif(x, args.tau, args.threshold, args.history_weight, args.history_power, args.history_eps), "masked": simulate_lslif(masked_x, args.tau, args.threshold, args.history_weight, args.history_power, args.history_eps)},
     }
 
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+    args.out_dir.mkdir(parents=True, exist_ok=not args.paper)
     fig_file = args.out_dir / "lif_lslif_prefix_mask_comparison.svg"
     csv_file = args.out_dir / "lif_lslif_prefix_mask_traces.csv"
     write_svg(x, masked_x, args.mask_steps, traces, fig_file, args.threshold)
     write_csv(x, masked_x, traces, csv_file)
+
+    if args.paper:
+        write_paper_outputs(x, masked_x, args.mask_steps, traces, args, args.out_dir)
 
     for model in ["LIF", "LSLIF"]:
         rate = suffix_change_rate(traces[model]["original"]["spikes"], traces[model]["masked"]["spikes"], args.mask_steps)
