@@ -108,8 +108,8 @@ class LSLIFNeuron(StatefulNeuron):
 
     def __init__(self, tau=2.0, decay_input=False, v_threshold=1.0,
                  v_reset=None, detach_reset=False, tau_eps=1e-6,
-                 history_weight=1.0, history_power=1.0, history_eps=1e-6,
-                 history_mode="all"):
+                 history_weight=0.1, history_power=1.0, history_eps=1e-6,
+                 history_mode="all", history_learn_weight=True):
         super().__init__()
         if history_mode not in {"all", "post_spike"}:
             raise ValueError("history_mode must be 'all' or 'post_spike'")
@@ -119,7 +119,11 @@ class LSLIFNeuron(StatefulNeuron):
         self.v_reset = v_reset
         self.detach_reset = bool(detach_reset)
         self.tau_eps = float(tau_eps)
-        self.history_weight = float(history_weight)
+        # A separate scalar per spiking layer, shared across its time steps.
+        if history_learn_weight:
+            self.history_weight = nn.Parameter(torch.tensor(float(history_weight)))
+        else:
+            self.history_weight = float(history_weight)
         self.history_power = float(history_power)
         self.history_eps = float(history_eps)
         self.history_mode = history_mode
@@ -356,7 +360,7 @@ def train_one_fold(args, fold_idx, neuron_type, train_path, test_path, device) -
         decay_input=args.decay_input, v_threshold=args.v_threshold, v_reset=None,
         detach_reset=args.detach_reset, history_weight=args.history_weight,
         history_power=args.history_power, history_eps=args.history_eps,
-        history_mode=args.history_mode,
+        history_mode=args.history_mode, history_learn_weight=args.history_learn_weight,
     ).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -373,7 +377,7 @@ def train_one_fold(args, fold_idx, neuron_type, train_path, test_path, device) -
         rows.append(row)
         if best is None or test_metrics.acc > best["test_acc"]:
             best = row.copy()
-            best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
+            best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
         print(f"[{neuron_type}][fold {fold_idx}][{epoch + 1:03d}/{args.epochs}] "
               f"train_loss={train_metrics.loss:.4f} train_acc={train_metrics.acc:.4f} "
               f"test_loss={test_metrics.loss:.4f} test_acc={test_metrics.acc:.4f} "
@@ -419,7 +423,14 @@ def parse_args():
     parser.add_argument("--v-threshold", type=float, default=1.0)
     parser.add_argument("--decay-input", action="store_true")
     parser.add_argument("--detach-reset", action="store_true")
-    parser.add_argument("--history-weight", type=float, default=1.0)
+    parser.add_argument("--history-weight", type=float, default=0.1,
+                        help="Initial history fusion weight (beta)")
+    history_group = parser.add_mutually_exclusive_group()
+    history_group.add_argument("--history-learn-weight", dest="history_learn_weight",
+                               action="store_true", help="Learn beta (default)")
+    history_group.add_argument("--history-fixed-weight", dest="history_learn_weight",
+                               action="store_false", help="Keep beta fixed for ablations")
+    parser.set_defaults(history_learn_weight=True)
     parser.add_argument("--history-power", type=float, default=1.0)
     parser.add_argument("--history-eps", type=float, default=1e-6)
     parser.add_argument("--history-mode", default="all", choices=["all", "post_spike"])
