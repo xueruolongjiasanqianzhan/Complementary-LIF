@@ -178,6 +178,81 @@ def write_csv(x: list[float], masked_x: list[float], traces: dict[str, dict[str,
             writer.writerow([i, x[i], masked_x[i], traces["LIF"]["original"]["decision_mem"][i], traces["LIF"]["masked"]["decision_mem"][i], traces["LIF"]["original"]["spikes"][i], traces["LIF"]["masked"]["spikes"][i], traces["LSLIF"]["original"]["decision_mem"][i], traces["LSLIF"]["masked"]["decision_mem"][i], traces["LSLIF"]["original"]["spikes"][i], traces["LSLIF"]["masked"]["spikes"][i]])
 
 
+
+def write_paper_model_comparison(rows, mask_steps, out_dir):
+    """Plot decision differences separately from LSLIF primary-state resets.
+
+    All differences are full minus masked. History is already weighted and
+    time-normalized; it is not the raw no-reset integrator state.
+    """
+    import matplotlib.pyplot as plt
+
+    steps = [row["step"] for row in rows]
+    blue, orange, green = "#0072B2", "#D55E00", "#009E73"
+    fig, axes = plt.subplots(
+        4, 1, figsize=(7.2, 9.0), sharex=True, layout="constrained",
+        gridspec_kw={"height_ratios": [1, 1, 1, 1.1]})
+    panels = [
+        (axes[0], [
+            ("lif_decision_mem_delta", "LIF decision", blue, "o"),
+            ("lslif_decision_mem_delta", "LSLIF decision", orange, "x")],
+         "(a) Decision membrane differences"),
+        (axes[1], [
+            ("lslif_primary_mem_delta", "Primary before reset", blue, "o"),
+            ("lslif_history_mem_delta", "Weighted history term", green, "x")],
+         "(b) LSLIF decision components"),
+        (axes[2], [
+            ("lslif_primary_mem_delta", "Primary before reset", blue, "o"),
+            ("lslif_post_reset_mem_delta", "Primary after reset", orange, ".")],
+         "(c) LSLIF primary-state reset"),
+    ]
+    for ax, series, title in panels:
+        for key, label, color, marker in series:
+            ax.plot(steps, [row[key] for row in rows], linestyle="none",
+                    marker=marker, ms=4, color=color,
+                    markerfacecolor="none" if marker == "o" else color,
+                    label=label)
+        ax.axhline(0, color="0.65", lw=0.6)
+        ax.set_ylabel("Difference\n(full − masked)")
+        ax.set_title(title, loc="left", fontsize=10, pad=30)
+        ax.legend(frameon=False, fontsize=8, ncol=2, loc="lower left",
+                  bbox_to_anchor=(0, 1.01))
+    # Only primary pre/post states share a reset jump. Decision includes history.
+    events = [row for row in rows
+              if row["lslif_spikes_full"] or row["lslif_spikes_masked"]]
+    axes[2].vlines(
+        [row["step"] for row in events],
+        [row["lslif_primary_mem_delta"] for row in events],
+        [row["lslif_post_reset_mem_delta"] for row in events],
+        color=orange, lw=1.0)
+    raster_rows = [
+        (3, "lif_spikes_full", "LIF full", blue),
+        (2, "lif_spikes_masked", "LIF masked", orange),
+        (1, "lslif_spikes_full", "LSLIF full", blue),
+        (0, "lslif_spikes_masked", "LSLIF masked", orange),
+    ]
+    for y, key, label, color in raster_rows:
+        axes[3].vlines([row["step"] for row in rows if row[key]],
+                       y - 0.25, y + 0.25, color=color, lw=1.2)
+    axes[3].set_yticks([r[0] for r in raster_rows],
+                      [r[2] for r in raster_rows])
+    axes[3].set_ylim(-0.5, 3.5)
+    axes[3].axhline(1.5, color="0.85", lw=0.6)
+    axes[3].set_title("(d) LIF and LSLIF spike outputs", loc="left", fontsize=10)
+    axes[3].set_xlabel("Time step")
+    for ax in axes:
+        if mask_steps:
+            ax.axvspan(0.5, mask_steps + 0.5, color="0.9", zorder=-5)
+            ax.axvline(mask_steps + 0.5, color="0.5", lw=0.8, ls="--")
+        ax.set_xlim(0.5, len(rows) + 0.5)
+    fig.suptitle("LIF and LSLIF responses to prefix masking", fontsize=12)
+    for ext in ("pdf", "svg", "png"):
+        path = out_dir / ("prefix_lif_lslif_comparison." + ext)
+        fig.savefig(path, dpi=300)
+        print(f"saved model comparison: {path}")
+    plt.close(fig)
+
+
 def write_paper_outputs(x, masked_x, mask_steps, traces, args, out_dir):
     """Export raw state differences and a discrete-time, unsmoothed figure.
 
@@ -247,6 +322,9 @@ def write_paper_outputs(x, masked_x, mask_steps, traces, args, out_dir):
         reset_expansions=sum(v > 1e-12 for v in lslif_changes),
         reset_unchanged=sum(abs(v) <= 1e-12 for v in lslif_changes),
         reset_event_definition="A suffix step where either LSLIF trajectory spikes; simultaneous spikes count once.")
+    summary["lslif_suffix_spike_change_rate"] = suffix_change_rate(
+        traces["LSLIF"]["original"]["spikes"],
+        traces["LSLIF"]["masked"]["spikes"], mask_steps)
     config = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}
     (out_dir / "config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -293,6 +371,7 @@ def write_paper_outputs(x, masked_x, mask_steps, traces, args, out_dir):
         for ext in ("pdf", "svg", "png"):
             fig.savefig(out_dir / ("prefix_reset_mechanism."+ext), dpi=300)
         plt.close(fig)
+        write_paper_model_comparison(rows, mask_steps, out_dir)
     print(json.dumps(summary, indent=2))
 
 
